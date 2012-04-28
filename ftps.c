@@ -27,7 +27,7 @@ main (void)
 		int body_len;
 		char body[MAX_BUF_SIZE];
 	} message;
-	char filename[MAX_BUF_SIZE];
+	/*char filename[MAX_BUF_SIZE];*/
 
     /* Open a UDP socket */
     sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -54,25 +54,27 @@ main (void)
     printf("Server waiting on port # %d\n", ntohs(name.sin_port));
 
 	/* read filename from msgsock and place in buf */
-	bzero(filename, MAX_BUF_SIZE);
+	/*bzero(filename, MAX_BUF_SIZE);*/
 	if(recvfrom(sock, (char *)&message, sizeof message, 0, (struct sockaddr *)&name, &namelen) < 0) {
 		perror("error reading on socket");
 		exit(4);
 	}
-	strcpy(filename, message.body);
-	printf("Server receiving filename: %s\n", filename);
+	/*strcpy(filename, message.body);
+	printf("Server receiving filename: %s\n", filename);*/
 	
 	/* create new name for copied file */
+	/* old:
 	char write_filename[MAX_BUF_SIZE];
 	bzero(write_filename, MAX_BUF_SIZE);
 	strcat(write_filename, "copy_of_");
 	strcat(write_filename, filename);
 	printf("Writing file: %s\n", write_filename);
 	printf("Ready to receive file...\n");
+	*/
 
 	/* open file to write */
 	FILE *fp;
-	fp = fopen(write_filename, "wb");
+	fp = fopen("copiedFile.jpg", "wb");
 	if (!fp) {
 		perror("error opening file to transfer");
 		exit(5);
