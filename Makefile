@@ -3,17 +3,21 @@
 CC = gcc
 OBJCLI = ftpc.c 
 OBJSRV = ftps.c
-CFLAGS = -ansi -lxnet
+OBJTCPD = tcpd.c
+CFLAGS = -Wall -ansi -lxnet
 # setup for system
 LIBS =
 
-all: ftpc ftps
+all: ftpc ftps tcpd
 
 ftpc:	$(OBJCLI)
 	$(CC) $(CFLAGS) -o $@ $(OBJCLI) $(LIBS)
 
 ftps:	$(OBJSRV)
 	$(CC) $(CFLAGS) -o $@ $(OBJSRV) $(LIBS)
+	
+tcpd:	$(OBJTCPD)
+	$(CC) $(CFLAGS) -o $@ $(OBJTCPD) $(LIBS)
 
 clean:
-	rm ftpc ftps
+	rm ftpc ftps tcpd
