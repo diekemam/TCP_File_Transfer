@@ -5,10 +5,18 @@
  * 
  * Run ftps on kappa.cse.ohio-state.edu
  */
-#include <stdio.h>
+
+#include <stdlib.h>
+#include <fcntl.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netdb.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <string.h>
+#include <strings.h>
+
 #define MAX_BUF_SIZE 980
 #define RECV_PORT 30700
 
@@ -18,16 +26,11 @@
  * creates a message to accept incoming data messages from the client, and receives data
  * until getting an empty packet, indicating the end of the file.
  */
-main (void)
+int main (void)
 {
     int sock, namelen;
     struct sockaddr_in name;
-	struct {
-		struct sockaddr_in header;
-		int body_len;
-		char body[MAX_BUF_SIZE];
-	} message;
-	/*char filename[MAX_BUF_SIZE];*/
+	char buf[MAX_BUF_SIZE];
 
     /* Open a UDP socket */
     sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -53,60 +56,40 @@ main (void)
     }
     printf("Server waiting on port # %d\n", ntohs(name.sin_port));
 
-	/* read filename from msgsock and place in buf */
-	/*bzero(filename, MAX_BUF_SIZE);*/
-	if(recvfrom(sock, (char *)&message, sizeof message, 0, (struct sockaddr *)&name, &namelen) < 0) {
-		perror("error reading on socket");
-		exit(4);
-	}
-	/*strcpy(filename, message.body);
-	printf("Server receiving filename: %s\n", filename);*/
-	
-	/* create new name for copied file */
-	/* old:
-	char write_filename[MAX_BUF_SIZE];
-	bzero(write_filename, MAX_BUF_SIZE);
-	strcat(write_filename, "copy_of_");
-	strcat(write_filename, filename);
-	printf("Writing file: %s\n", write_filename);
-	printf("Ready to receive file...\n");
-	*/
-
 	/* open file to write */
 	FILE *fp;
-	fp = fopen("copiedFile.jpg", "wb");
+	fp = fopen("MyImage1.jpg", "wb");
 	if (!fp) {
 		perror("error opening file to transfer");
 		exit(5);
 	}
 	
-	int bytes_recv = 0;
-	int bytes_in_msg = 1;
+	int bytes_recv = MAX_BUF_SIZE;
 	int bytes_written = 0;
 	int bytes_total = 0;
-	while (bytes_in_msg > 0) {
+	while (bytes_recv > 0) {
   
 		/* read from sock and place in buf */
-		bzero(message.body, MAX_BUF_SIZE);
-		bytes_recv = recvfrom(sock, (char *)&message, sizeof message, 0, (struct sockaddr *)&name, &namelen);
-		bytes_in_msg = message.body_len;
+		bzero(buf, MAX_BUF_SIZE);
+		bytes_recv = recvfrom(sock, buf, sizeof buf, 0, (struct sockaddr *)&name, &namelen);
 		if(bytes_recv < 0) {
 			perror("error reading on socket");
 			exit(6);
 		}
 		
 		/* write received message to file */
-		if (bytes_in_msg > 0) {
-			bytes_written = fwrite(message.body, 1, message.body_len, fp);
+		if (bytes_recv > 0) {
+			bytes_written = fwrite(buf, 1, bytes_recv , fp);
 			bytes_total += bytes_written;
 		}
-		printf("%d bytes in msg,\t%d bytes written,\ttotal: %d bytes\n", bytes_in_msg, bytes_written, bytes_total);
+		printf("%d bytes received,\t%d bytes written,\ttotal: %d bytes\n", bytes_recv, bytes_written, bytes_total);
 		bytes_written = 0;
 	}
-	printf("Finished writing %s\n", write_filename);
+	printf("Finished writing MyImage1.jpg\n");
 	fclose(fp);
 
     /* server terminates connection, closes socket, and exits */
     close(sock);
     exit(0);
+	return 0;
 }
