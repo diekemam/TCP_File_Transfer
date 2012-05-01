@@ -48,7 +48,7 @@ int main (int argc, char *argv[])
 	} message;
 	
 	struct hostent *hp, *lp, *gethostbyname();
-	
+
 	/* Server/client choice is the first character of the second argument -- we'll probably remove this later and implement tcpdc.c and tcpds.c */
 	char choice = argv[1][0];
 	
@@ -102,7 +102,6 @@ int main (int argc, char *argv[])
 			{
 			    /* receives packets from troll process */
 				bytes_recv = recvfrom(tcpds_sock, (char *)&message, sizeof message, 0, (struct sockaddr *)&datagram, &datagram_len);
-				printf("Receiving from troll process\n");
 
 				if(bytes_recv < 0) 
 				{
@@ -112,9 +111,7 @@ int main (int argc, char *argv[])
 		   
 
 				/*forward buffer message from daemon to ftps*/
-
-				bzero(message.body, MAX_BUF_SIZE);
-				bytes_sent = sendto(ftps_sock, (char *)&message.body, sizeof message.body, 0, (struct sockaddr *)&ftps_datagram, sizeof(ftps_datagram));
+				bytes_sent = sendto(ftps_sock, (char *)&message.body, message.body_len, 0, (struct sockaddr *)&ftps_datagram, sizeof(ftps_datagram));
 				bytes_in_msg = message.body_len;
 
 				if(bytes_sent < 0) 
@@ -124,7 +121,7 @@ int main (int argc, char *argv[])
 				}
 			}
 
-			printf("Received file\n");
+			printf("Finished forwarding file to ftps\n");
 		
 		
 			break;
