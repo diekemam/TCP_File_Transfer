@@ -28,8 +28,8 @@
  */
 int main (void)
 {
-    int sock, namelen;
-    struct sockaddr_in name;
+    int sock, datagram_len;
+    struct sockaddr_in datagram;
 	char buf[MAX_BUF_SIZE];
 
     /* Open a UDP socket */
@@ -40,26 +40,25 @@ int main (void)
     }
 
     /* create name with parameters and bind name to socket */
-    name.sin_family = AF_INET;
-    name.sin_port = htons(RECV_PORT);
-    name.sin_addr.s_addr = INADDR_ANY;
-    if(bind(sock, (struct sockaddr *)&name, sizeof(name)) < 0) {
+    datagram.sin_family = AF_INET;
+    datagram.sin_port = htons(RECV_PORT);
+    datagram.sin_addr.s_addr = INADDR_ANY;
+    if(bind(sock, (struct sockaddr *)&datagram, sizeof(datagram)) < 0) 
+	{
 		perror("getting socket name");
 		exit(2);
     }
-    namelen = sizeof(struct sockaddr_in);
+
+    datagram_len = sizeof(struct sockaddr_in);
 	
     /* Find assigned port value and print it for client to use */
-    if(getsockname(sock, (struct sockaddr *)&name, &namelen) < 0){
-		perror("getting sock name");
-		exit(3);
-    }
-    printf("Server waiting on port # %d\n", ntohs(name.sin_port));
+    printf("Server waiting on port # %d\n", ntohs(datagram.sin_port));
 
 	/* open file to write */
 	FILE *fp;
 	fp = fopen("MyImage1.jpg", "wb");
-	if (!fp) {
+	if (!fp) 
+	{
 		perror("error opening file to transfer");
 		exit(5);
 	}
@@ -67,21 +66,25 @@ int main (void)
 	int bytes_recv = MAX_BUF_SIZE;
 	int bytes_written = 0;
 	int bytes_total = 0;
-	while (bytes_recv > 0) {
-  
+	while (bytes_recv > 0)
+	{
 		/* read from sock and place in buf */
 		bzero(buf, MAX_BUF_SIZE);
-		bytes_recv = recvfrom(sock, buf, sizeof buf, 0, (struct sockaddr *)&name, &namelen);
-		if(bytes_recv < 0) {
+		bytes_recv = recvfrom(sock, buf, sizeof(buf), 0, (struct sockaddr *)&datagram, &datagram_len);
+
+		if(bytes_recv < 0) 
+		{
 			perror("error reading on socket");
 			exit(6);
 		}
 		
 		/* write received message to file */
-		if (bytes_recv > 0) {
+		if (bytes_recv > 0) 
+		{
 			bytes_written = fwrite(buf, 1, bytes_recv , fp);
 			bytes_total += bytes_written;
 		}
+
 		printf("%d bytes received,\t%d bytes written,\ttotal: %d bytes\n", bytes_recv, bytes_written, bytes_total);
 		bytes_written = 0;
 	}
