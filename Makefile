@@ -1,23 +1,28 @@
-# Makefile for ftpc and ftps
+# Makefile for file transfer project
 
 CC = gcc
 OBJCLI = ftpc.c 
 OBJSRV = ftps.c
-OBJTCPD = tcpd.c
+OBJTCPDC = tcpdc.c
+OBJTCPDS = tcpds.c
 CFLAGS = -Wall -ansi -lxnet
+
 # setup for system
 LIBS =
 
-all: ftpc ftps tcpd
+all: ftpc ftps tcpdc tcpds
 
 ftpc:	$(OBJCLI)
 	$(CC) $(CFLAGS) -o $@ $(OBJCLI) $(LIBS)
 
 ftps:	$(OBJSRV)
 	$(CC) $(CFLAGS) -o $@ $(OBJSRV) $(LIBS)
-	
-tcpd:	$(OBJTCPD)
-	$(CC) $(CFLAGS) -o $@ $(OBJTCPD) $(LIBS)
+
+tcpdc:	$(OBJTCPDC)
+	$(CC) $(CFLAGS) -o $@ $(OBJTCPDC) $(LIBS)
+
+tcpds:  $(OBJTCPDS)
+	$(CC) $(CFLAGS) -o $@ $(OBJTCPDS) $(LIBS)
 
 clean:
-	rm ftpc ftps tcpd
+	rm ftpc ftps tcpdc tcpds

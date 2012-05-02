@@ -16,11 +16,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <strings.h>
-
-#define MAX_BUF_SIZE 980
-#define TCPD_CLI_PORT 30701
-#define CLI_HOST_NAME "mu.cse.ohio-state.edu"
-#define SRV_HOST_NAME "kappa.cse.ohio-state.edu"
+#include "file_transfer.h"
 
 /*
  * The file transfer client takes a filename to transfer as its only argument.  It opens
@@ -53,7 +49,7 @@ int main(int argc, char *argv[])
 
     /* construct name for connecting to troll */
     datagram.sin_family = AF_INET;
-    datagram.sin_port = htons(TCPD_CLI_PORT);
+    datagram.sin_port = htons(TCPDC_PORT);
 
     /* convert troll hostname to IP address and enter into name */
     lp = gethostbyname(CLI_HOST_NAME);

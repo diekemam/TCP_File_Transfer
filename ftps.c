@@ -16,9 +16,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <strings.h>
-
-#define MAX_BUF_SIZE 980
-#define RECV_PORT 30700
+#include "file_transfer.h"
 
 /*
  * The file transfer server takes no arguments - it simply waits to receive data from 
@@ -41,7 +39,7 @@ int main (void)
 
     /* create name with parameters and bind name to socket */
     datagram.sin_family = AF_INET;
-    datagram.sin_port = htons(RECV_PORT);
+    datagram.sin_port = htons(FTPS_PORT);
     datagram.sin_addr.s_addr = INADDR_ANY;
     if(bind(sock, (struct sockaddr *)&datagram, sizeof(datagram)) < 0) 
 	{
