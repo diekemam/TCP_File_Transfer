@@ -3,34 +3,23 @@
  * Michael Diekema, Adam Zink
  */
 
-#include <stdlib.h>
-#include <fcntl.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netdb.h>
-#include <stdio.h>
-#include <unistd.h>
-#include <string.h>
-#include <strings.h>
-#include "file_transfer.h"
+#include "libs.h"
+#include "packet.h"
 
 /* tcp daemon called with host name and port number of server */
 int main (int argc, char *argv[]) 
 {
+    if (argc > 1)
+	{
+	  printf("Usage -- tcpdc\n");
+	  exit(1);
+	}
+
     int datagram_len = sizeof(struct sockaddr_in);
-	int bytes_recv = MAX_BUF_SIZE;
-	int bytes_sent = 0;
 
 	int ftpc_sock, troll_sock;
 	struct sockaddr_in datagram, tcpdc_datagram;
-
-	struct
-	{
-		struct sockaddr_in header;
-		int body_len;
-		char body[MAX_BUF_SIZE];
-	} message;
+	Troll_Packet trollPacket;
 	
 	struct hostent *hp, *lp, *gethostbyname();
 
@@ -73,11 +62,11 @@ int main (int argc, char *argv[])
 		fprintf(stderr, "%s:unknown host\n", CLI_HOST_NAME);
 		exit(3);
 	}
-	bcopy((char *)lp->h_addr, (char *)&message.header.sin_addr, lp->h_length);
+	bcopy((char *)lp->h_addr, (char *)&trollPacket.header.sin_addr, lp->h_length);
 			
 	/* prepare message for troll */
-	message.header.sin_family = htons(AF_INET);
-	message.header.sin_port = htons(TROLL_PORT);
+	trollPacket.header.sin_family = htons(AF_INET);
+	trollPacket.header.sin_port = htons(TROLL_PORT);
 			
 	/* convert server hostname to IP address and enter into tcpdc_datagram */
 	hp = gethostbyname(SRV_HOST_NAME);
@@ -87,17 +76,22 @@ int main (int argc, char *argv[])
 		exit(3);
 	}
 	bcopy((char *)hp->h_addr, (char *)&tcpdc_datagram.sin_addr, hp->h_length);
-	printf("Sending to troll at port %d\n", ntohs(message.header.sin_port));
+	printf("Sending to troll at port %d\n", ntohs(trollPacket.header.sin_port));
 	printf("Troll sending to TCPDS at port %d\n", ntohs(tcpdc_datagram.sin_port));
 
-	while (bytes_recv > 0) 
+	int bytes_sent = 0, bytes_recv = 0;
+
+	/* Make sure no FIN, SYN, etc. flags are set when sending the file data over to tcpds */
+	trollPacket.packet.flags = 0;
+
+	/* Receive image data until the fin bit has been set */
+	while ( (trollPacket.packet.flags & 0x1) == 0) 
 	{
 	    /* receives packets from local ftpc process */
-		bzero(message.body, MAX_BUF_SIZE);
+        bzero(&trollPacket.packet, sizeof(trollPacket.packet));
 
-		bytes_recv = recvfrom(ftpc_sock, (char *)&message.body, sizeof message.body, 0, (struct sockaddr *)&datagram, &datagram_len);
+		bytes_recv = recvfrom(ftpc_sock, (char *)&trollPacket.packet, sizeof(trollPacket.packet), 0, (struct sockaddr *)&datagram, &datagram_len);
 
-		message.body_len = bytes_recv;
 		if(bytes_recv < 0) 
         {
 			perror("error reading on socket");
@@ -105,14 +99,16 @@ int main (int argc, char *argv[])
 		}
 			  
 		/* forward buffer message from daemon to troll process */
-	    bytes_sent = sendto(troll_sock, (char *)&message, sizeof message, 0, (struct sockaddr *)&tcpdc_datagram, sizeof(tcpdc_datagram));
+	    bytes_sent = sendto(troll_sock, (char *)&trollPacket, sizeof(trollPacket), 0, (struct sockaddr *)&tcpdc_datagram, sizeof(tcpdc_datagram));
 		if(bytes_sent < 0)
         {
 			perror("error writing on socket");
 			exit(6);
 		}
+		printf("Forwarding sequence num %u to tcpds through troll\n", trollPacket.packet.seqNum); 
 				
 	}
+
 	printf("Finished forwarding file\n");
 	return(0);
 }

@@ -1,37 +1,25 @@
 /* 
- * tcpdc.c, TCP Daemon on server side using UDP functions
+ * tcpds.c, TCP Daemon on server side using UDP functions
  * Michael Diekema, Adam Zink
  */
 
-#include <stdlib.h>
-#include <fcntl.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netdb.h>
-#include <stdio.h>
-#include <unistd.h>
-#include <string.h>
-#include <strings.h>
-#include "file_transfer.h"
+#include "libs.h"
+#include "packet.h"
 
 /* tcp daemon called with host name and port number of server */
 int main (int argc, char *argv[]) 
 {
+    if (argc > 1)
+	{
+	  printf("Usage -- tcpds\n");
+	  exit(1);
+	}
+
 	int datagram_len = sizeof(struct sockaddr_in);
-	int bytes_recv = MAX_BUF_SIZE;
-	int bytes_in_msg = MAX_BUF_SIZE;
-	int bytes_sent = 0;
 
 	int ftps_sock, tcpds_sock;
 	struct sockaddr_in datagram, ftps_datagram;
-
-	struct
-	{
-		struct sockaddr_in header;
-		int body_len;
-		char body[MAX_BUF_SIZE];
-	} message;
+	Troll_Packet trollPacket;
 	
 	struct hostent *hp, *gethostbyname();
 
@@ -77,10 +65,17 @@ int main (int argc, char *argv[])
 	printf("TCPDS listening on port %d\n", ntohs(datagram.sin_port));
 	printf("TCPDS sending to FTPS on port %d\n", ntohs(ftps_datagram.sin_port));
 
-    while (bytes_in_msg > 0) 
+	int bytes_recv = MAX_BUF_SIZE;
+	int bytes_sent = 0;
+
+    /* Make sure no FIN, SYN, etc. flags are set when sending the file data over to ftps */
+	trollPacket.packet.flags = 0;
+
+	/* Receive image data until the FIN bit has been set */
+    while ( (trollPacket.packet.flags & 0x1) == 0) 
 	{
 		/* receives packets from troll process */
-		bytes_recv = recvfrom(tcpds_sock, (char *)&message, sizeof message, 0, (struct sockaddr *)&datagram, &datagram_len);
+		bytes_recv = recvfrom(tcpds_sock, (char *)&trollPacket, sizeof(trollPacket), 0, (struct sockaddr *)&datagram, &datagram_len);
 
 		if(bytes_recv < 0) 
 		{
@@ -89,14 +84,14 @@ int main (int argc, char *argv[])
 		}
 		   
 		/*forward buffer message from daemon to ftps*/
-		bytes_sent = sendto(ftps_sock, (char *)&message.body, message.body_len, 0, (struct sockaddr *)&ftps_datagram, sizeof(ftps_datagram));
-		bytes_in_msg = message.body_len;
+		bytes_sent = sendto(ftps_sock, (char *)&trollPacket.packet, sizeof(trollPacket.packet), 0, (struct sockaddr *)&ftps_datagram, sizeof(ftps_datagram));
 
 		if(bytes_sent < 0) 
 		{
 			perror("error sending on socket:tcpds\n");
 			exit(6);
 		}
+		printf("Forwarding sequence num %u to ftps\n", trollPacket.packet.seqNum);
 	}
 
 	printf("Finished forwarding file to ftps\n");

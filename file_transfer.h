@@ -1,5 +1,5 @@
-#ifndef FILE_TRANSFER_H
-#define FILE_TRANSFER_H
+#ifndef CSE_678_FILE_TRANSFER_H
+#define CSE_678_FILE_TRANSFER_H
 
 #define MAX_BUF_SIZE 980
 #define CLI_HOST_NAME "mu.cse.ohio-state.edu"

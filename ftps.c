@@ -1,39 +1,40 @@
 /* 
  * ftps.c, File Transfer Server using UDP
  * Modified from server.c, UDP version
- * Adam Zink, 4/24/12
+ * Michael Diekema, Adam Zink
  * 
  * Run ftps on kappa.cse.ohio-state.edu
  */
 
-#include <stdlib.h>
-#include <fcntl.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netdb.h>
-#include <stdio.h>
-#include <unistd.h>
-#include <string.h>
-#include <strings.h>
-#include "file_transfer.h"
+#include "libs.h"
+#include "packet.h"
 
 /*
- * The file transfer server takes no arguments - it simply waits to receive data from 
- * the sender on a predefined port.  It opens a UDP socket, opens a new file to write,
- * creates a message to accept incoming data messages from the client, and receives data
- * until getting an empty packet, indicating the end of the file.
+ *The file transfer server takes no arguments - it
+ *simply waits to receive data from the sender on a
+ *predefined port.  It opens a UDP socket, opens a new
+ *file to write, creates a message to accept incoming
+ *data messages from the client, and receives data 
+ *until getting an empty packet, indicating the end
+ *of the file.
  */
 int main (void)
 {
-    int sock, datagram_len;
-    struct sockaddr_in datagram;
-	char buf[MAX_BUF_SIZE];
+    int inSock, outSock, datagram_len;
+    struct sockaddr_in datagram, tcpds_datagram;
+	struct hostent *hp, *gethostbyname();
+	TCP_Packet ftpsPacket;
 
-    /* Open a UDP socket */
-    sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock < 0) {
-		perror("opening datagram socket");
+    /* Open UDP sockets for receiving seqNums and sending acks*/
+    inSock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (inSock < 0) {
+		perror("opening datagram socket\n");
+		exit(1);
+    }
+
+	outSock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (outSock < 0) {
+		perror("opening datagram socket\n");
 		exit(1);
     }
 
@@ -41,56 +42,85 @@ int main (void)
     datagram.sin_family = AF_INET;
     datagram.sin_port = htons(FTPS_PORT);
     datagram.sin_addr.s_addr = INADDR_ANY;
-    if(bind(sock, (struct sockaddr *)&datagram, sizeof(datagram)) < 0) 
+    if(bind(inSock, (struct sockaddr *)&datagram, sizeof(datagram)) < 0) 
 	{
-		perror("getting socket name");
+		perror("getting socket name\n");
 		exit(2);
     }
 
     datagram_len = sizeof(struct sockaddr_in);
+
+	/* construct name for sending to tcpds */
+	tcpds_datagram.sin_family = AF_INET;
+	tcpds_datagram.sin_port = htons(TCPDS_PORT);
+
+	/* convert troll hostname to IP address and enter into name */
+    hp = gethostbyname(SRV_HOST_NAME);
+	if (hp == 0) 
+	{
+	    fprintf(stderr, "%s:unknown host\n", SRV_HOST_NAME);
+		exit(3);
+	}
+    bcopy((char *)hp->h_addr, (char *)&tcpds_datagram.sin_addr, hp->h_length);
 	
-    /* Find assigned port value and print it for client to use */
+    /* Display port numbers being used */
     printf("Server waiting on port # %d\n", ntohs(datagram.sin_port));
+	printf("Sending acks to tcpds on port %d\n", ntohs(tcpds_datagram.sin_port));
 
 	/* open file to write */
 	FILE *fp;
 	fp = fopen("MyImage1.jpg", "wb");
 	if (!fp) 
 	{
-		perror("error opening file to transfer");
+		perror("error opening file to transfer\n");
 		exit(5);
 	}
 	
-	int bytes_recv = MAX_BUF_SIZE;
+	int bytes_recv = MAX_BUF_SIZE, bytes_sent = MAX_BUF_SIZE;
 	int bytes_written = 0;
-	int bytes_total = 0;
-	while (bytes_recv > 0)
+
+	/* Write data to the file until the FIN bit is set */
+	while ( (ftpsPacket.flags & 01) == 0)
 	{
 		/* read from sock and place in buf */
-		bzero(buf, MAX_BUF_SIZE);
-		bytes_recv = recvfrom(sock, buf, sizeof(buf), 0, (struct sockaddr *)&datagram, &datagram_len);
+		bzero(&ftpsPacket, sizeof(ftpsPacket));
+		bytes_recv = recvfrom(inSock, &ftpsPacket, sizeof(ftpsPacket), 0, (struct sockaddr *)&datagram, &datagram_len);
 
 		if(bytes_recv < 0) 
 		{
-			perror("error reading on socket");
+			perror("error reading on socket\n");
 			exit(6);
 		}
+
+		/* Stop writing to file once the FIN flag is set */
+		if ( (ftpsPacket.flags & 01) > 0)
+		    break;
 		
 		/* write received message to file */
 		if (bytes_recv > 0) 
 		{
-			bytes_written = fwrite(buf, 1, bytes_recv , fp);
-			bytes_total += bytes_written;
+			bytes_written = fwrite(ftpsPacket.data, 1, sizeof(ftpsPacket.data), fp);
 		}
 
-		printf("%d bytes received,\t%d bytes written,\ttotal: %d bytes\n", bytes_recv, bytes_written, bytes_total);
-		bytes_written = 0;
+		ftpsPacket.ackNum = ftpsPacket.seqNum + 1;
+		printf("Received sequence number %u, sending acknowledgement number %u\n", ftpsPacket.seqNum, (ftpsPacket.seqNum) + 1);
+
+		/* Send the acknowledgement back to tcpds */
+		bytes_sent = sendto(outSock, &ftpsPacket, sizeof(ftpsPacket), 0, (struct sockaddr *)&tcpds_datagram, datagram_len);
+
+		if (bytes_sent < 0)
+		{
+			perror("error writing to socket\n");
+			exit(6);
+		}
 	}
+
 	printf("Finished writing MyImage1.jpg\n");
 	fclose(fp);
 
-    /* server terminates connection, closes socket, and exits */
-    close(sock);
+    /* Server terminates connection, closes sockets, and exits */
+    close(inSock);
+	close(outSock);
     exit(0);
 	return 0;
 }
