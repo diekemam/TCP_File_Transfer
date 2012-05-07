@@ -91,6 +91,13 @@ int main(int argc, char *argv[])
 	
 	int bytes_read = 1, bytes_sent = 0, bytes_recv = 0, bytes_total = 0;
 
+	/* The delta timer will cause ftpc to resend a packet if it times out */
+	int result = 0;
+	fd_set fds;
+	struct timeval timeout;
+	timeout.tv_sec = 0;
+	timeout.tv_usec = 100000;
+
 	/* Send image data to tcpdc until the entire file has been read */
 	while (bytes_read > 0) 
     {
@@ -121,11 +128,34 @@ int main(int argc, char *argv[])
 		bytes_total += bytes_read;
 		printf("Sending seqNum %u\n", ftpcPacket.seqNum);
 
+		/* At this point, ftpc will either receive an ackNum or timeout if the packet was dropped */
+		do
+		{
+		    FD_ZERO(&fds);
+		    FD_SET(ftpc_sock, &fds);
+		    result = select(sizeof(fds) * 8, &fds, NULL, NULL, &timeout);
+
+			/* If ftpc_sock has not received any data before it times out, resend the packet */
+		    if (result == 0)
+			{
+			    /* write buf to sock */
+			    bytes_sent = sendto(tcpdc_sock, &ftpcPacket, sizeof(ftpcPacket), 0, (struct sockaddr *)&tcpdc_datagram, sizeof(tcpdc_datagram));
+
+				printf("Timeout: resending seqNum %u\n", ftpcPacket.seqNum);
+				if(bytes_sent < 0) 
+				{
+					perror("error writing on socket");
+					exit(6);
+				}
+			}
+		} while(result == 0);
+
+
 		/* Wait for acknowledgement from ftps */
 		bytes_recv = recvfrom(ftpc_sock, &ftpcPacket, sizeof(ftpcPacket), 0, (struct sockaddr *)&datagram, &datagram_len);
 		printf("Received ackNum %u\n", ftpcPacket.ackNum);
 
-		ftpcPacket.seqNum += bytes_read;
+		ftpcPacket.seqNum += bytes_read ;
 	}
 
 	printf("Sent %d bytes\n", bytes_total);

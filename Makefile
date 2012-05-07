@@ -2,7 +2,7 @@
 
 CC = gcc
 OBJCHK = checksum.c
-OBJCLI = ftpc.c 
+OBJCLI = ftpc.c
 OBJSRV = ftps.c
 OBJTCPDC = tcpdc.c
 OBJTCPDS = tcpds.c
