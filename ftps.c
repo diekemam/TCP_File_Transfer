@@ -93,20 +93,18 @@ int main (void)
 		}
 
 		/* Stop writing to file once the FIN flag is set */
-		if ( (ftpsPacket.flags & 01) > 0)
+		if ( (ftpsPacket.flags & 0x1) > 0)
 		    break;
 		
 		/* write received message to file */
 		if (bytes_recv > 0) 
-		{
 			bytes_written = fwrite(ftpsPacket.data, 1, sizeof(ftpsPacket.data), fp);
-		}
 
 		ftpsPacket.ackNum = ftpsPacket.seqNum + 1;
-		printf("Received sequence number %u, sending acknowledgement number %u\n", ftpsPacket.seqNum, (ftpsPacket.seqNum) + 1);
+		printf("Received sequence number %u, sending acknowledgement number %u\n", ftpsPacket.seqNum, (ftpsPacket.ackNum));
 
 		/* Send the acknowledgement back to tcpds */
-		bytes_sent = sendto(outSock, &ftpsPacket, sizeof(ftpsPacket), 0, (struct sockaddr *)&tcpds_datagram, datagram_len);
+		bytes_sent = sendto(outSock, &ftpsPacket, sizeof(ftpsPacket), 0, (struct sockaddr *)&tcpds_datagram, sizeof(tcpds_datagram));
 
 		if (bytes_sent < 0)
 		{

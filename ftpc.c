@@ -24,8 +24,9 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-	int tcpd_sock;
-    struct sockaddr_in datagram;
+	int datagram_len = sizeof(struct sockaddr_in);
+	int tcpdc_sock, ftpc_sock;
+    struct sockaddr_in datagram, tcpdc_datagram;
     struct hostent *lp, *gethostbyname();
 	TCP_Packet ftpcPacket; /* create a TCP packet to send over the network */
 
@@ -36,25 +37,45 @@ int main(int argc, char *argv[])
 	char *filename = argv[1];
 
     /* create socket for connecting to server */
-    tcpd_sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (tcpd_sock < 0) 
+    tcpdc_sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (tcpdc_sock < 0) 
     {
 		perror("opening datagram socket");
 		exit(2);
     }
 
-    /* construct name for connecting to troll */
-    datagram.sin_family = AF_INET;
-    datagram.sin_port = htons(TCPDC_PORT);
+	/* create socket for receiving from tcpdc */
+    ftpc_sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (ftpc_sock < 0) 
+    {
+		perror("opening datagram socket");
+		exit(2);
+    }
 
-    /* convert troll hostname to IP address and enter into name */
+    /* construct tcpdc_datagram for sending packets to tcpdc */
+    tcpdc_datagram.sin_family = AF_INET;
+    tcpdc_datagram.sin_port = htons(TCPDC_PORT);
+
+    /* convert tcpdc hostname to IP address and enter into tcpdc_datagram */
     lp = gethostbyname(CLI_HOST_NAME);
     if (lp == 0) 
     {
 		fprintf(stderr, "%s:unknown host\n", CLI_HOST_NAME);
 		exit(3);
     }
-    bcopy((char *)lp->h_addr, (char *)&datagram.sin_addr, lp->h_length);
+    bcopy((char *)lp->h_addr, (char *)&tcpdc_datagram.sin_addr, lp->h_length);
+
+	/* construct datagram for receiving from tcpdc */
+	datagram.sin_family = AF_INET;
+	datagram.sin_port = htons(FTPC_PORT);
+	datagram.sin_addr.s_addr = INADDR_ANY;
+
+	/* Bind ftpc_sock so it is listening on FTPC_PORT for any sender */
+	if (bind(ftpc_sock, (struct sockaddr *)&datagram, sizeof(datagram)) < 0)
+	{
+		perror("error binding datagram socket\n");
+		exit(2);
+	}
 	
 	/* open file to transfer */
 	FILE *fp;
@@ -68,9 +89,7 @@ int main(int argc, char *argv[])
 	printf("Client sending filename: %s\n", filename);
 	printf("Sending file...\n");
 	
-	int bytes_read = 1;
-	int bytes_sent = 0;
-	int bytes_total = 0;
+	int bytes_read = 1, bytes_sent = 0, bytes_recv = 0, bytes_total = 0;
 
 	/* Send image data to tcpdc until the entire file has been read */
 	while (bytes_read > 0) 
@@ -91,7 +110,7 @@ int main(int argc, char *argv[])
 		ftpcPacket.flags = 0;
 
 		/* write buf to sock */
-		bytes_sent = sendto(tcpd_sock, &ftpcPacket, sizeof(ftpcPacket), 0, (struct sockaddr *)&datagram, sizeof(datagram));
+		bytes_sent = sendto(tcpdc_sock, &ftpcPacket, sizeof(ftpcPacket), 0, (struct sockaddr *)&tcpdc_datagram, sizeof(tcpdc_datagram));
 
 		if(bytes_sent < 0) 
         {
@@ -100,18 +119,24 @@ int main(int argc, char *argv[])
 		}
 
 		bytes_total += bytes_read;
-		printf("Sending sequence number %u\n", ftpcPacket.seqNum);
+		printf("Sending seqNum %u\n", ftpcPacket.seqNum);
+
+		/* Wait for acknowledgement from ftps */
+		bytes_recv = recvfrom(ftpc_sock, &ftpcPacket, sizeof(ftpcPacket), 0, (struct sockaddr *)&datagram, &datagram_len);
+		printf("Received ackNum %u\n", ftpcPacket.ackNum);
+
 		ftpcPacket.seqNum++;
-		/* printf("%d bytes read,\ttotal: %d bytes\n", bytes_read, bytes_total); */
 	}
 
-	/* Now that we are done sending the file, we send a packet with the fin bit set to indicate that the connection should stop */
+	printf("Sent %d bytes\n", bytes_total);
+
+	/* Now that we are done sending the file, we send a packet with the FIN bit set to indicate that the connection should stop */
 	bzero(ftpcPacket.data, MAX_BUF_SIZE);
 
     /* Set the FIN flag to indicate that we want to close the connection */
 	ftpcPacket.flags = 0x1;
 
-	bytes_sent = sendto(tcpd_sock, &ftpcPacket, sizeof(ftpcPacket), 0, (struct sockaddr *)&datagram, sizeof(datagram));
+	bytes_sent = sendto(tcpdc_sock, &ftpcPacket, sizeof(ftpcPacket), 0, (struct sockaddr *)&tcpdc_datagram, sizeof(tcpdc_datagram));
 
 	printf("Finished sending %s\n", filename);
 	fclose(fp);

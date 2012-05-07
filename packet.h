@@ -4,6 +4,7 @@
 #define MAX_BUF_SIZE 980
 #define CLI_HOST_NAME "mu.cse.ohio-state.edu"
 #define SRV_HOST_NAME "kappa.cse.ohio-state.edu"
+#define FTPC_PORT 30699
 #define FTPS_PORT 30700
 #define TCPDC_PORT 30701
 #define TROLL_PORT 30702
