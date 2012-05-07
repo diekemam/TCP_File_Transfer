@@ -18,7 +18,7 @@ int main (int argc, char *argv[])
     int datagram_len = sizeof(struct sockaddr_in);
 
 	int ftpc_sock, tcpdc_sock, troll_sock;
-	struct sockaddr_in datagram, tcpds_datagram, ftpc_datagram;
+	struct sockaddr_in datagram, troll_datagram, ftpc_datagram;
 	Troll_Packet trollPacket;
 	TCP_Packet tcpdcPacket;
 	
@@ -62,24 +62,15 @@ int main (int argc, char *argv[])
 	}
 	printf("TCPDC waiting on port num %d\n", ntohs(datagram.sin_port));
 
-	/* construct datagram for connecting to TCPDS */
-	tcpds_datagram.sin_family = AF_INET;
-	tcpds_datagram.sin_port = htons(TCPDS_PORT);
-
-	/* convert troll hostname to IP address and enter into name */
-	lp = gethostbyname(CLI_HOST_NAME);
-	if (lp == 0) 
-	{
-		fprintf(stderr, "%s:unknown host\n", CLI_HOST_NAME);
-		exit(3);
-	}
-	bcopy((char *)lp->h_addr, (char *)&trollPacket.header.sin_addr, lp->h_length);
+	/* construct datagram for connecting to troll */
+	troll_datagram.sin_family = AF_INET;
+	troll_datagram.sin_port = htons(TROLL_PORT);
 
 	/* construct datagram for forwarding acks to ftpc */
 	ftpc_datagram.sin_family = AF_INET;
 	ftpc_datagram.sin_port = htons(FTPC_PORT);
 
-	/* convert ftpc hostname to IP address and enter into ftpc_datagram */
+	/* convert ftpc hostname to IP address and enter into ftpc_datagram and troll_datagram */
 	lp = gethostbyname(CLI_HOST_NAME);
 	if (lp == 0) 
 	{
@@ -87,21 +78,23 @@ int main (int argc, char *argv[])
 		exit(3);
 	}
 	bcopy((char *)lp->h_addr, (char *)&ftpc_datagram.sin_addr, lp->h_length);
+	bcopy((char *)lp->h_addr, (char *)&troll_datagram.sin_addr, lp->h_length);
 			
 	/* prepare message for troll */
 	trollPacket.header.sin_family = htons(AF_INET);
-	trollPacket.header.sin_port = htons(TROLL_PORT);
+	trollPacket.header.sin_port = htons(TCPDS_PORT);
 			
-	/* convert server hostname to IP address and enter into tcpdc_datagram */
+	/* convert server hostname to IP address and enter into troll_datagram */
 	hp = gethostbyname(SRV_HOST_NAME);
 	if (hp == 0)
     {
 		fprintf(stderr, "%s:unknown host\n", SRV_HOST_NAME);
 		exit(3);
 	}
-	bcopy((char *)hp->h_addr, (char *)&tcpds_datagram.sin_addr, hp->h_length);
+	bcopy((char *)hp->h_addr, (char *)&trollPacket.header.sin_addr, hp->h_length);
+
 	printf("Sending to troll at port %d\n", ntohs(trollPacket.header.sin_port));
-	printf("Troll sending to TCPDS at port %d\n", ntohs(tcpds_datagram.sin_port));
+	printf("Troll sending to TCPDS at port %d\n", ntohs(trollPacket.header.sin_port));
 
 	int bytes_sent = 0, bytes_recv = 0;
 
@@ -121,14 +114,20 @@ int main (int argc, char *argv[])
 			perror("error reading on socket");
 			exit(6);
 		}
+		
+		/* compute checksum before forwarding packet to troll */
+		trollPacket.packet.checksum = checksum(trollPacket.packet.data);
+		printf("client checksum = %04x\n", trollPacket.packet.checksum);
 			  
 		/* forward buffer message from daemon to troll process */
-	    bytes_sent = sendto(troll_sock, (char *)&trollPacket, sizeof(trollPacket), 0, (struct sockaddr *)&tcpds_datagram, sizeof(tcpds_datagram));
+	    bytes_sent = sendto(troll_sock, (char *)&trollPacket, sizeof(trollPacket), 0, (struct sockaddr *)&troll_datagram, sizeof(troll_datagram));
+
 		if(bytes_sent < 0)
         {
 			perror("error writing on socket");
 			exit(6);
 		}
+
 		printf("Forwarding sequence num %u to tcpds through troll\n", trollPacket.packet.seqNum); 
 
 		/* Stop transmitting data once the FIN bit has been set */

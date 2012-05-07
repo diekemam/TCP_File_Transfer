@@ -125,7 +125,7 @@ int main(int argc, char *argv[])
 		bytes_recv = recvfrom(ftpc_sock, &ftpcPacket, sizeof(ftpcPacket), 0, (struct sockaddr *)&datagram, &datagram_len);
 		printf("Received ackNum %u\n", ftpcPacket.ackNum);
 
-		ftpcPacket.seqNum++;
+		ftpcPacket.seqNum += bytes_read;
 	}
 
 	printf("Sent %d bytes\n", bytes_total);

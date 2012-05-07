@@ -78,6 +78,7 @@ int main (void)
 	
 	int bytes_recv = MAX_BUF_SIZE, bytes_sent = MAX_BUF_SIZE;
 	int bytes_written = 0;
+	uint32_t last_seqNum = 0;
 
 	/* Write data to the file until the FIN bit is set */
 	while ( (ftpsPacket.flags & 01) == 0)
@@ -97,9 +98,15 @@ int main (void)
 		    break;
 		
 		/* write received message to file */
-		if (bytes_recv > 0) 
-			bytes_written = fwrite(ftpsPacket.data, 1, sizeof(ftpsPacket.data), fp);
-
+		if (bytes_recv > 0)
+		{
+			if (last_seqNum == 0)
+				bytes_written = fwrite(ftpsPacket.data, 1, sizeof(ftpsPacket.data), fp);
+			else
+				bytes_written = fwrite(ftpsPacket.data, 1, ftpsPacket.seqNum-last_seqNum, fp);
+		}
+		
+		last_seqNum = ftpsPacket.seqNum;
 		ftpsPacket.ackNum = ftpsPacket.seqNum + 1;
 		printf("Received sequence number %u, sending acknowledgement number %u\n", ftpsPacket.seqNum, (ftpsPacket.ackNum));
 

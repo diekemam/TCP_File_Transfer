@@ -107,38 +107,50 @@ int main (int argc, char *argv[])
 			perror("error reading on socket:tcpds\n");
 			exit(6);
 		}
-		   
-		/*forward buffer message from daemon to ftps*/
-		bytes_sent = sendto(ftps_sock, (char *)&trollPacket.packet, sizeof(trollPacket.packet), 0, (struct sockaddr *)&ftps_datagram, sizeof(ftps_datagram));
-
-		if (bytes_sent < 0) 
+		
+		/* compute the checksum and compare to packet header value */
+		uint16_t crc = checksum(trollPacket.packet.data);
+		printf("server checksum = %04x, packet checksum = %04x\n", crc, trollPacket.packet.checksum);
+		
+		if (crc == trollPacket.packet.checksum)
 		{
-			perror("error sending on socket\n");
-			exit(6);
+			/*forward buffer message from daemon to ftps*/
+			bytes_sent = sendto(ftps_sock, (char *)&trollPacket.packet, sizeof(trollPacket.packet), 0, (struct sockaddr *)&ftps_datagram, sizeof(ftps_datagram));
+
+			if (bytes_sent < 0) 
+			{
+				perror("error sending on socket\n");
+				exit(6);
+			}
+			printf("Forwarding sequence num %u to ftps\n", trollPacket.packet.seqNum);
+
+			/* If we receive a FIN packet, forward it to ftps and close the connection */
+			if ( (trollPacket.packet.flags & 0x1) == 1)
+				break;
+
+			bytes_recv = recvfrom(tcpds_sock, (char *)&tcpdsPacket, sizeof(tcpdsPacket), 0, (struct sockaddr *)&datagram, &datagram_len);
+
+			if (bytes_recv < 0)
+			{
+			  perror("error receiving ack on socket\n");
+			  exit(6);
+			}
+			
+			printf("Forwarding ackNum %u to tcpdc\n", tcpdsPacket.ackNum);
+
+			bytes_sent = sendto(tcpdc_sock, (char *)&tcpdsPacket, sizeof(tcpdsPacket), 0, (struct sockaddr *)&tcpdc_datagram, sizeof(tcpdc_datagram)); 
+
+			if (bytes_sent < 0)
+			{
+				perror("error sending ack to tcpdc\n");
+				exit(6);
+			}	
 		}
-		printf("Forwarding sequence num %u to ftps\n", trollPacket.packet.seqNum);
-
-		/* If we receive a FIN packet, forward it to ftps and close the connection */
-		if ( (trollPacket.packet.flags & 0x1) == 1)
-		    break;
-
-		bytes_recv = recvfrom(tcpds_sock, (char *)&tcpdsPacket, sizeof(tcpdsPacket), 0, (struct sockaddr *)&datagram, &datagram_len);
-
-		if (bytes_recv < 0)
+		else
 		{
-		  perror("error receiving ack on socket\n");
-		  exit(6);
+			/* invalid checksum, dropping packet */
+			printf("Packet dropped\n");
 		}
-
-		bytes_sent = sendto(tcpdc_sock, (char *)&tcpdsPacket, sizeof(tcpdsPacket), 0, (struct sockaddr *)&tcpdc_datagram, sizeof(tcpdc_datagram)); 
-
-		if (bytes_sent < 0)
-		{
-			perror("error sending ack to tcpdc\n");
-			exit(6);
-		}
-
-		printf("Forwarding ackNum %u to tcpdc\n", tcpdsPacket.ackNum);
 	}
 
 	printf("Finished forwarding file to ftps\n");
