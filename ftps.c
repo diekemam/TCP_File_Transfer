@@ -8,6 +8,7 @@
 
 #include "libs.h"
 #include "packet.h"
+#include "tcpd_functions.h"
 
 /*
  *The file transfer server takes no arguments - it
@@ -26,37 +27,25 @@ int main (void)
 	TCP_Packet ftpsPacket;
 
     /* Open UDP sockets for receiving seqNums and sending acks*/
-    inSock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (inSock < 0) {
-		perror("opening datagram socket\n");
-		exit(1);
-    }
+    inSock = tcpd_socket(AF_INET, SOCK_DGRAM, 0);
+	outSock = tcpd_socket(AF_INET, SOCK_DGRAM, 0);
 
-	outSock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (outSock < 0) {
-		perror("opening datagram socket\n");
-		exit(1);
-    }
-
-    /* create name with parameters and bind name to socket */
+    /* create datagram which listens for any sender and bind it to inSock */
     datagram.sin_family = AF_INET;
     datagram.sin_port = htons(FTPS_PORT);
     datagram.sin_addr.s_addr = INADDR_ANY;
-    if(bind(inSock, (struct sockaddr *)&datagram, sizeof(datagram)) < 0) 
-	{
-		perror("getting socket name\n");
-		exit(2);
-    }
+   
+	tcpd_bind(inSock, &datagram, sizeof(datagram));
 
     datagram_len = sizeof(struct sockaddr_in);
 
-	/* construct name for sending to tcpds */
+	/* construct name for sending acks to tcpds */
 	tcpds_datagram.sin_family = AF_INET;
 	tcpds_datagram.sin_port = htons(TCPDS_PORT);
 
 	/* convert troll hostname to IP address and enter into name */
     hp = gethostbyname(SRV_HOST_NAME);
-	if (hp == 0) 
+	if (hp == 0)
 	{
 	    fprintf(stderr, "%s:unknown host\n", SRV_HOST_NAME);
 		exit(3);
@@ -78,47 +67,29 @@ int main (void)
 	
 	int bytes_recv = MAX_BUF_SIZE, bytes_sent = MAX_BUF_SIZE;
 	int bytes_written = 0;
-	/*uint32_t last_seqNum = 0;*/
 
 	/* Write data to the file until the FIN bit is set */
 	while ( (ftpsPacket.flags & 01) == 0)
 	{
 		/* read from sock and place in buf */
 		bzero(&ftpsPacket, sizeof(ftpsPacket));
-		bytes_recv = recvfrom(inSock, &ftpsPacket, sizeof(ftpsPacket), 0, (struct sockaddr *)&datagram, &datagram_len);
-
-		if(bytes_recv < 0) 
-		{
-			perror("error reading on socket\n");
-			exit(6);
-		}
+		bytes_recv = tcpd_recvfrom(inSock, &ftpsPacket, sizeof(ftpsPacket), 0, &datagram, &datagram_len);
 
 		/* Stop writing to file once the FIN flag is set */
 		if ( (ftpsPacket.flags & 0x1) > 0)
 		    break;
 		
 		/* write received message to file */
-		
 		if (bytes_recv > 0)
 		{
-			/*if (last_seqNum == 0)*/
-				bytes_written = fwrite(ftpsPacket.data, 1, sizeof(ftpsPacket.data), fp);
-			/*else
-				bytes_written = fwrite(ftpsPacket.data, 1, ftpsPacket.seqNum-last_seqNum, fp);*/
+		  bytes_written = fwrite(ftpsPacket.data, 1, sizeof(ftpsPacket.data), fp);
 		}
 		
-		/*last_seqNum = ftpsPacket.seqNum;*/
 		ftpsPacket.ackNum = ftpsPacket.seqNum + 1;
 		printf("Received sequence number %u, sending acknowledgement number %u\n", ftpsPacket.seqNum, (ftpsPacket.ackNum));
 
 		/* Send the acknowledgement back to tcpds */
-		bytes_sent = sendto(outSock, &ftpsPacket, sizeof(ftpsPacket), 0, (struct sockaddr *)&tcpds_datagram, sizeof(tcpds_datagram));
-
-		if (bytes_sent < 0)
-		{
-			perror("error writing to socket\n");
-			exit(6);
-		}
+		bytes_sent = tcpd_sendto(outSock, &ftpsPacket, sizeof(ftpsPacket), 0, &tcpds_datagram, sizeof(tcpds_datagram));
 	}
 
 	printf("Finished writing MyImage1.jpg\n");

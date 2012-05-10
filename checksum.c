@@ -2,6 +2,7 @@
 
 #include "libs.h"
 #include "packet.h"
+#include "checksum.h"
 
 /* Takes the data buffer as its argument and returns the 16 bit checksum value */
 uint16_t checksum(char buf[MAX_BUF_SIZE]) {

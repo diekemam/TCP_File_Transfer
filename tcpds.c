@@ -5,6 +5,8 @@
 
 #include "libs.h"
 #include "packet.h"
+#include "tcpd_functions.h"
+#include "checksum.h"
 
 /* tcp daemon called with host name and port number of server */
 int main (int argc, char *argv[]) 
@@ -24,29 +26,10 @@ int main (int argc, char *argv[])
 	
 	struct hostent *hp, *lp, *gethostbyname();
 
-	/* create socket for receiving from troll and ftps*/
-	tcpds_sock = socket(AF_INET, SOCK_DGRAM, 0);
-	if (tcpds_sock < 0) 
-	{
-	    perror("error opening tcpds_sock\n");
-		exit(2);
-	}
-
-	/* create socket for sending to ftps */
-	ftps_sock = socket(AF_INET, SOCK_DGRAM, 0);
-	if (ftps_sock < 0) 
-	{
-		perror("error opening ftps_sock\n");
-		exit(2);
-	}
-
-	/* create socket for forwarding acks to tcpdc */
-	tcpdc_sock = socket(AF_INET, SOCK_DGRAM, 0);
-	if (tcpdc_sock < 0)
-	{
-		perror("error opening tcpdc_dock\n");
-		exit(2);
-	}
+	/* create sockets for receiving datagrams, sending to ftps, and sending to tcpdc */
+	tcpds_sock = tcpd_socket(AF_INET, SOCK_DGRAM, 0);
+	ftps_sock = tcpd_socket(AF_INET, SOCK_DGRAM, 0);
+	tcpdc_sock = tcpd_socket(AF_INET, SOCK_DGRAM, 0);
 
 	/* receive incoming information in datagram, which listens for any sender */
 	datagram.sin_family = AF_INET;
@@ -54,11 +37,7 @@ int main (int argc, char *argv[])
 	datagram.sin_addr.s_addr = INADDR_ANY;
 
 	/* Bind tcpds_sock so it is listening on TCPDS_PORT for any sender */
-	if (bind(tcpds_sock, (struct sockaddr *)&datagram, sizeof(datagram)) < 0)
-	{
-	    perror("error binding tcpds_sock\n");
-		exit(3);
-	}
+	tcpd_bind(tcpds_sock, &datagram, sizeof(datagram));
 
 	/* construct name for sending to ftps */
 	ftps_datagram.sin_family = AF_INET;
@@ -96,18 +75,18 @@ int main (int argc, char *argv[])
     /* Make sure no FIN, SYN, etc. flags are set when sending the file data over to ftps */
 	trollPacket.packet.flags = 0;
 
+	int result = 0;
+	fd_set fds;
+	struct timeval timeout;
+	timeout.tv_sec = 0;
+	timeout.tv_usec = 100000;
+
 	/* Receive image data until the FIN bit has been set */
     while ( (trollPacket.packet.flags & 0x1) == 0) 
 	{
 		/* receives packets from troll process */
-		bytes_recv = recvfrom(tcpds_sock, (char *)&trollPacket, sizeof(trollPacket), 0, (struct sockaddr *)&datagram, &datagram_len);
+		bytes_recv = tcpd_recvfrom(tcpds_sock, (char *)&trollPacket, sizeof(trollPacket), 0, &datagram, &datagram_len);
 
-		if (bytes_recv < 0) 
-		{
-			perror("error reading on socket:tcpds\n");
-			exit(6);
-		}
-		
 		/* compute the checksum and compare to packet header value */
 		uint16_t crc = checksum(trollPacket.packet.data);
 		printf("server checksum = %04x, packet checksum = %04x\n", crc, trollPacket.packet.checksum);
@@ -115,37 +94,29 @@ int main (int argc, char *argv[])
 		if (crc == trollPacket.packet.checksum)
 		{
 			/*forward buffer message from daemon to ftps*/
-			bytes_sent = sendto(ftps_sock, (char *)&trollPacket.packet, sizeof(trollPacket.packet), 0, (struct sockaddr *)&ftps_datagram, sizeof(ftps_datagram));
+			bytes_sent = tcpd_sendto(ftps_sock, (char *)&trollPacket.packet, sizeof(trollPacket.packet), 0, &ftps_datagram, sizeof(ftps_datagram));
 
-			if (bytes_sent < 0) 
-			{
-				perror("error sending on socket\n");
-				exit(6);
-			}
 			printf("Forwarding sequence num %u to ftps\n", trollPacket.packet.seqNum);
 
 			/* If we receive a FIN packet, forward it to ftps and close the connection */
 			if ( (trollPacket.packet.flags & 0x1) == 1)
 				break;
 
-			bytes_recv = recvfrom(tcpds_sock, (char *)&tcpdsPacket, sizeof(tcpdsPacket), 0, (struct sockaddr *)&datagram, &datagram_len);
 
-			if (bytes_recv < 0)
-			{
-			  perror("error receiving ack on socket\n");
-			  exit(6);
-			}
+			FD_ZERO(&fds);
+			FD_SET(tcpds_sock, &fds);
+			result = select(sizeof(fds) * 8, &fds, NULL, NULL, &timeout);
+			if (result == 0)
+			    continue;
+
+			bytes_recv = tcpd_recvfrom(tcpds_sock, (char *)&tcpdsPacket, sizeof(tcpdsPacket), 0, &datagram, &datagram_len);
 			
 			printf("Forwarding ackNum %u to tcpdc\n", tcpdsPacket.ackNum);
 
-			bytes_sent = sendto(tcpdc_sock, (char *)&tcpdsPacket, sizeof(tcpdsPacket), 0, (struct sockaddr *)&tcpdc_datagram, sizeof(tcpdc_datagram)); 
+			bytes_sent = tcpd_sendto(tcpdc_sock, (char *)&tcpdsPacket, sizeof(tcpdsPacket), 0, &tcpdc_datagram, sizeof(tcpdc_datagram)); 
 
-			if (bytes_sent < 0)
-			{
-				perror("error sending ack to tcpdc\n");
-				exit(6);
-			}	
 		}
+
 		else
 		{
 			/* invalid checksum, dropping packet */

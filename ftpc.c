@@ -4,17 +4,19 @@
  * Adam Zink, 4/24/12
  * 
  * Run ftpc on mu.cse.ohio-state.edu
- */
+*/
 
 #include "libs.h"
 #include "packet.h"
+#include "tcpd_functions.h"
 
 /*
- * The file transfer client takes a filename to transfer as its only argument.  It opens
- * a UDP socket, creates a message for the server, packs the message within a packet
- * that is sent to the troll, opens the specified file, and sends MTU sized data buffers
- * to the server process.
- */
+ *The file transfer client takes a filename to transfer as its only
+ *argument.  It opens a UDP socket, creates a message for the server,
+ *packs the message within a packet that is sent to the troll, opens
+ *the specified file, and sends MTU sized data buffers to the server
+ *process.
+*/
 int main(int argc, char *argv[])
 {
     /* Check if the filename is passed to ftpc */
@@ -36,21 +38,9 @@ int main(int argc, char *argv[])
 
 	char *filename = argv[1];
 
-    /* create socket for connecting to server */
-    tcpdc_sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (tcpdc_sock < 0) 
-    {
-		perror("opening datagram socket");
-		exit(2);
-    }
-
-	/* create socket for receiving from tcpdc */
-    ftpc_sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (ftpc_sock < 0) 
-    {
-		perror("opening datagram socket");
-		exit(2);
-    }
+    /* create sockets for connecting to server and receiving from tcpdc */
+	tcpdc_sock = tcpd_socket(AF_INET, SOCK_DGRAM, 0);
+    ftpc_sock = tcpd_socket(AF_INET, SOCK_DGRAM, 0);
 
     /* construct tcpdc_datagram for sending packets to tcpdc */
     tcpdc_datagram.sin_family = AF_INET;
@@ -71,11 +61,7 @@ int main(int argc, char *argv[])
 	datagram.sin_addr.s_addr = INADDR_ANY;
 
 	/* Bind ftpc_sock so it is listening on FTPC_PORT for any sender */
-	if (bind(ftpc_sock, (struct sockaddr *)&datagram, sizeof(datagram)) < 0)
-	{
-		perror("error binding datagram socket\n");
-		exit(2);
-	}
+	tcpd_bind(ftpc_sock, &datagram, sizeof(datagram));
 	
 	/* open file to transfer */
 	FILE *fp;
@@ -96,15 +82,18 @@ int main(int argc, char *argv[])
 	fd_set fds;
 	struct timeval timeout;
 	timeout.tv_sec = 0;
-	timeout.tv_usec = 100000;
+	timeout.tv_usec = 300000;
 
 	/* Send image data to tcpdc until the entire file has been read */
 	while (bytes_read > 0) 
     {
 		/* sleep ~10 ms to space packets received by troll */
+        usleep(10000);
+		/*
 		int i;
 		for (i=0; i<500000; i++);
-		
+		*/
+
 		/* read part of file into buf */
 		bzero(ftpcPacket.data, MAX_BUF_SIZE);
 		bytes_read = fread(ftpcPacket.data, 1, MAX_BUF_SIZE, fp);
@@ -117,13 +106,7 @@ int main(int argc, char *argv[])
 		ftpcPacket.flags = 0;
 
 		/* write buf to sock */
-		bytes_sent = sendto(tcpdc_sock, &ftpcPacket, sizeof(ftpcPacket), 0, (struct sockaddr *)&tcpdc_datagram, sizeof(tcpdc_datagram));
-
-		if(bytes_sent < 0) 
-        {
-			perror("error writing on socket");
-			exit(6);
-		}
+		bytes_sent = tcpd_sendto(tcpdc_sock, &ftpcPacket, sizeof(ftpcPacket), 0, &tcpdc_datagram, sizeof(tcpdc_datagram));
 
 		bytes_total += bytes_read;
 		printf("Sending seqNum %u\n", ftpcPacket.seqNum);
@@ -139,22 +122,16 @@ int main(int argc, char *argv[])
 		    if (result == 0)
 			{
 			    /* write buf to sock */
-			    bytes_sent = sendto(tcpdc_sock, &ftpcPacket, sizeof(ftpcPacket), 0, (struct sockaddr *)&tcpdc_datagram, sizeof(tcpdc_datagram));
-
+			    bytes_sent = tcpd_sendto(tcpdc_sock, &ftpcPacket, sizeof(ftpcPacket), 0, &tcpdc_datagram, sizeof(tcpdc_datagram));
 				printf("Timeout: resending seqNum %u\n", ftpcPacket.seqNum);
-				if(bytes_sent < 0) 
-				{
-					perror("error writing on socket");
-					exit(6);
-				}
 			}
 		} while(result == 0);
 
 
 		/* Wait for acknowledgement from ftps */
-		bytes_recv = recvfrom(ftpc_sock, &ftpcPacket, sizeof(ftpcPacket), 0, (struct sockaddr *)&datagram, &datagram_len);
-		printf("Received ackNum %u\n", ftpcPacket.ackNum);
+		bytes_recv = tcpd_recvfrom(ftpc_sock, &ftpcPacket, sizeof(ftpcPacket), 0, &datagram, &datagram_len);
 
+		printf("Received ackNum %u\n", ftpcPacket.ackNum);
 		ftpcPacket.seqNum++;
 	}
 
@@ -166,7 +143,7 @@ int main(int argc, char *argv[])
     /* Set the FIN flag to indicate that we want to close the connection */
 	ftpcPacket.flags = 0x1;
 
-	bytes_sent = sendto(tcpdc_sock, &ftpcPacket, sizeof(ftpcPacket), 0, (struct sockaddr *)&tcpdc_datagram, sizeof(tcpdc_datagram));
+	bytes_sent = tcpd_sendto(tcpdc_sock, &ftpcPacket, sizeof(ftpcPacket), 0, &tcpdc_datagram, sizeof(tcpdc_datagram));
 
 	printf("Finished sending %s\n", filename);
 	fclose(fp);
