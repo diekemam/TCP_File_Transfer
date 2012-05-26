@@ -53,8 +53,18 @@ int main (void)
     bcopy((char *)hp->h_addr, (char *)&tcpds_datagram.sin_addr, hp->h_length);
 	
     /* Display port numbers being used */
-    printf("Server waiting on port # %d\n", ntohs(datagram.sin_port));
+    printf("Server waiting on port %d\n", ntohs(datagram.sin_port));
 	printf("Sending acks to tcpds on port %d\n", ntohs(tcpds_datagram.sin_port));
+
+
+
+	/* Wait indefinitely until we receive a SYN packet from tcpds */
+	tcpd_recvfrom(inSock, (char *)&ftpsPacket, sizeof(ftpsPacket), 0, &datagram, &datagram_len);
+
+	printf("Received SYN packet from troll, sending ACK to tcpds\n");
+	tcpd_sendto(outSock, (char *)&ftpsPacket, sizeof(ftpsPacket), 0, &tcpds_datagram, sizeof(tcpds_datagram));
+
+
 
 	/* open file to write */
 	FILE *fp;

@@ -4,9 +4,12 @@
  */
 
 #include "libs.h"
+#include "file_transfer.h"
 #include "packet.h"
 #include "tcpd_functions.h"
 #include "checksum.h"
+#include "deltatimer.h"
+#include "tcpd_buf.h"
 
 /* tcp daemon called with host name and port number of server */
 int main (int argc, char *argv[]) 
@@ -24,7 +27,7 @@ int main (int argc, char *argv[])
 	/* Remove tcpds_datagram later -- used to send FIN bit directly to tcpds_datagram */
 	struct sockaddr_in datagram, troll_datagram, tcpds_datagram, ftpc_datagram;
 	Troll_Packet trollPacket;
-	TCP_Packet tcpdcPacket;
+	TCP_Packet tcpdcPacket; /* Used to receive acks from server */
 	
 	struct hostent *hp, *lp, *gethostbyname();
 
@@ -92,19 +95,40 @@ int main (int argc, char *argv[])
 	printf("Sending to troll at port %d\n", ntohs(trollPacket.header.sin_port));
 	printf("Troll sending to TCPDS at port %d\n", ntohs(trollPacket.header.sin_port));
 
+	/* Send the SYN packets over to tcpds to start the connection */
+	struct timeval timeout;
+	timeout.tv_sec = 0;
+	timeout.tv_usec = 100000;
+	fd_set fds;
+	int result = 0;
+	do
+	{
+	    tcpd_recvfrom(tcpdc_sock, (char *)&tcpdcPacket, sizeof(tcpdcPacket), 0, &datagram, &datagram_len);
+	    printf("Received SYN packet from client, forwarding to tcpds\n");
+	    tcpd_sendto(troll_sock, (char *)&trollPacket, sizeof(trollPacket), 0, &troll_datagram, sizeof(troll_datagram));
+	  
+	    FD_ZERO(&fds);
+	    FD_SET(tcpdc_sock, &fds);
+	    result = select(FD_SETSIZE, &fds, NULL, NULL, &timeout);
+
+		/* If we have not received an ACK, ftpc will retransmit the SYN packet */
+		if (result == 0)
+		    continue;
+
+	    tcpd_recvfrom(tcpdc_sock, (char *)&tcpdcPacket, sizeof(tcpdcPacket), 0, &datagram, &datagram_len);
+	  
+	} while(result == 0);
+	
+	/* Now we have received the ACK, so send it back to ftpc */
+	printf("Received SYNACK, forwarding to ftpc\n");
+	tcpd_sendto(ftpc_sock, (char *)&tcpdcPacket, sizeof(tcpdcPacket), 0, &ftpc_datagram, sizeof(ftpc_datagram)); 
+
 	int bytes_sent = 0, bytes_recv = 0;
 
 	/* Make sure no FIN, SYN, etc. flags are set when sending the file data over to tcpds */
 	trollPacket.packet.flags = 0;
 
-	/* Receive image data until the fin bit has been set */
-
-	int result = 0;
-	fd_set fds;
-	struct timeval timeout;
-	timeout.tv_sec = 0;
-	timeout.tv_usec = 100000;
-	
+	/* Receive image data until the fin bit has been set */	
 	while ( (trollPacket.packet.flags & 0x1) == 0) 
 	{
 	    /* receives packets from local ftpc process */

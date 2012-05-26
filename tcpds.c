@@ -71,15 +71,30 @@ int main (int argc, char *argv[])
 
 	int bytes_recv = MAX_BUF_SIZE;
 	int bytes_sent = 0;
-
-    /* Make sure no FIN, SYN, etc. flags are set when sending the file data over to ftps */
-	trollPacket.packet.flags = 0;
-
-	int result = 0;
-	fd_set fds;
+	
 	struct timeval timeout;
 	timeout.tv_sec = 0;
 	timeout.tv_usec = 100000;
+	fd_set fds;
+	int result = 0;
+
+
+
+	/* Wait indefinitely until we receive a SYN packet from the troll */
+	tcpd_recvfrom(tcpds_sock, (char *)&trollPacket, sizeof(trollPacket), 0, &datagram, &datagram_len);
+
+	printf("Received SYN packet from troll, forwarding to ftps\n");
+
+	tcpd_sendto(ftps_sock, (char *)&trollPacket.packet, sizeof(trollPacket.packet), 0, &ftps_datagram, sizeof(ftps_datagram));
+
+	tcpd_recvfrom(tcpds_sock, (char *)&tcpdsPacket, sizeof(tcpdsPacket), 0, &datagram, &datagram_len);
+
+	printf("Received ACK from ftps, forwarding to tcpdc\n");
+	tcpd_sendto(tcpdc_sock, (char *)&tcpdsPacket, sizeof(tcpdsPacket), 0, &tcpdc_datagram, sizeof(tcpdc_datagram));
+
+
+
+
 
 	/* Receive image data until the FIN bit has been set */
     while ( (trollPacket.packet.flags & 0x1) == 0) 

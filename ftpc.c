@@ -1,7 +1,7 @@
 /* 
  * ftpc.c, File Transfer Client using UDP
  * Modified from client.c, UDP version
- * Adam Zink, 4/24/12
+ * Michael Diekema, Adam Zink, 4/24/12
  * 
  * Run ftpc on mu.cse.ohio-state.edu
 */
@@ -9,6 +9,8 @@
 #include "libs.h"
 #include "packet.h"
 #include "tcpd_functions.h"
+#include "file_transfer.h"
+#include "tcpd_buf.h"
 
 /*
  *The file transfer client takes a filename to transfer as its only
@@ -25,35 +27,29 @@ int main(int argc, char *argv[])
         printf("usage: ftpc filename\n");
         exit(1);
     }
-
+	
 	int datagram_len = sizeof(struct sockaddr_in);
 	int tcpdc_sock, ftpc_sock;
-    struct sockaddr_in datagram, tcpdc_datagram;
-    struct hostent *lp, *gethostbyname();
+	struct sockaddr_in datagram, tcpdc_datagram;
+	struct hostent *lp, *gethostbyname();
 	TCP_Packet ftpcPacket; /* create a TCP packet to send over the network */
 
-    /* Generate an unsigned 32 bit random number using the current time as the seed. Assign the random number to the sequence number field in TCP_Packet */
-    uint32_t randSeed = srand48(time(NULL));
-    ftpcPacket.seqNum = (uint32_t)mrand48(randSeed);
-
-	char *filename = argv[1];
-
-    /* create sockets for connecting to server and receiving from tcpdc */
+	/* create sockets for connecting to server and receiving from tcpdc */
 	tcpdc_sock = tcpd_socket(AF_INET, SOCK_DGRAM, 0);
-    ftpc_sock = tcpd_socket(AF_INET, SOCK_DGRAM, 0);
+	ftpc_sock = tcpd_socket(AF_INET, SOCK_DGRAM, 0);
 
-    /* construct tcpdc_datagram for sending packets to tcpdc */
-    tcpdc_datagram.sin_family = AF_INET;
-    tcpdc_datagram.sin_port = htons(TCPDC_PORT);
+	/* construct tcpdc_datagram for sending packets to tcpdc */
+	tcpdc_datagram.sin_family = AF_INET;
+	tcpdc_datagram.sin_port = htons(TCPDC_PORT);
 
-    /* convert tcpdc hostname to IP address and enter into tcpdc_datagram */
-    lp = gethostbyname(CLI_HOST_NAME);
-    if (lp == 0) 
-    {
+	/* convert tcpdc hostname to IP address and enter into tcpdc_datagram */
+	lp = gethostbyname(CLI_HOST_NAME);
+	if (lp == 0) 
+	{
 		fprintf(stderr, "%s:unknown host\n", CLI_HOST_NAME);
 		exit(3);
-    }
-    bcopy((char *)lp->h_addr, (char *)&tcpdc_datagram.sin_addr, lp->h_length);
+	}
+	bcopy((char *)lp->h_addr, (char *)&tcpdc_datagram.sin_addr, lp->h_length);
 
 	/* construct datagram for receiving from tcpdc */
 	datagram.sin_family = AF_INET;
@@ -62,37 +58,59 @@ int main(int argc, char *argv[])
 
 	/* Bind ftpc_sock so it is listening on FTPC_PORT for any sender */
 	tcpd_bind(ftpc_sock, &datagram, sizeof(datagram));
+
+
+	/* First, establish the connection with the server. Keep sending packets with the SYN bit set until an ACK is received */
+	struct timeval timeout;
+	timeout.tv_sec = 0;
+	timeout.tv_usec = 200000;
+	fd_set fds;
+	int result = 0;
+
+	/* Turn on the SYN bit when setting up the connection */
+	ftpcPacket.flags = 0x2;
+	do
+	{
+	    tcpd_sendto(tcpdc_sock, &ftpcPacket, sizeof(ftpcPacket), 0, &tcpdc_datagram, sizeof(tcpdc_datagram));
+	    printf("Sending SYN packet to server\n");
+	    FD_ZERO(&fds);
+	    FD_SET(ftpc_sock, &fds);
+	    /* If ftpc_sock has received an ACK before it times out, start sending the actual file data over to ftps */
+	    result = select(FD_SETSIZE,  &fds, NULL, NULL, &timeout);
+
+		/* If ftpc_sock has not received an ACK, resend the SYN packet */
+		if (result == 0)
+		  continue;
+
+	    tcpd_recvfrom(ftpc_sock, &ftpcPacket, sizeof(ftpcPacket), 0, &datagram, &datagram_len);
+	} while(result == 0);
+
+	printf("Connection established...\n");
 	
-	/* open file to transfer */
+	/* Open file to transfer */
+	char *filename = argv[1];
 	FILE *fp;
 	fp = fopen(filename, "rb");
 	if (!fp) 
     {
-		perror("error opening file to transfer");
+		perror("error opening file to transfer\n");
 		exit(4);
 	}
-	
+
 	printf("Client sending filename: %s\n", filename);
 	printf("Sending file...\n");
 	
 	int bytes_read = 1, bytes_sent = 0, bytes_recv = 0, bytes_total = 0;
 
-	/* The delta timer will cause ftpc to resend a packet if it times out */
-	int result = 0;
-	fd_set fds;
-	struct timeval timeout;
-	timeout.tv_sec = 0;
-	timeout.tv_usec = 300000;
+	/* Generate an unsigned 32 bit random number using the current time as the seed. Assign the random number to the sequence number field in TCP_Packet */
+    uint32_t randSeed = srand48(time(NULL));
+    ftpcPacket.seqNum = (uint32_t)mrand48(randSeed);
 
 	/* Send image data to tcpdc until the entire file has been read */
 	while (bytes_read > 0) 
     {
 		/* sleep ~10 ms to space packets received by troll */
         usleep(10000);
-		/*
-		int i;
-		for (i=0; i<500000; i++);
-		*/
 
 		/* read part of file into buf */
 		bzero(ftpcPacket.data, MAX_BUF_SIZE);
@@ -105,7 +123,13 @@ int main(int argc, char *argv[])
 		/* Since we are sending file data over to tcpdc, none of the SYN, FIN, etc. flags are set */
 		ftpcPacket.flags = 0;
 
-		/* write buf to sock */
+		/* Wait until the circular buffer isn't full and write buf to sock */
+		while (is_tcpd_buf_full())
+		{
+			usleep(10000);
+		}
+
+		/* Now we send the packet over to tcpdc, which is running on the same machine, so we have a reliable connection */
 		bytes_sent = tcpd_sendto(tcpdc_sock, &ftpcPacket, sizeof(ftpcPacket), 0, &tcpdc_datagram, sizeof(tcpdc_datagram));
 
 		bytes_total += bytes_read;
@@ -149,7 +173,8 @@ int main(int argc, char *argv[])
 	fclose(fp);
 
     /* close connection */
-    close(socket);
+    close(tcpdc_sock);
+	close(ftpc_sock);
     exit(0);
 	return 0;
 }
