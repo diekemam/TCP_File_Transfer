@@ -12,27 +12,17 @@
 #include "file_transfer.h"
 #include "tcpd_buf.h"
 
-/*
- *The file transfer client takes a filename to transfer as its only
- *argument.  It opens a UDP socket, creates a message for the server,
- *packs the message within a packet that is sent to the troll, opens
- *the specified file, and sends MTU sized data buffers to the server
- *process.
-*/
-int main(int argc, char *argv[])
+int datagram_len, tcpdc_sock, ftpc_sock;
+struct sockaddr_in datagram, tcpdc_datagram;
+struct hostent *lp, *gethostbyname();
+struct timeval timeout;
+fd_set fds;
+TCP_Packet ftpcPacket;
+FILE *fp;
+
+void initializeData()
 {
-    /* Check if the filename is passed to ftpc */
-    if (argc < 2) 
-    {
-        printf("usage: ftpc filename\n");
-        exit(1);
-    }
-	
-	int datagram_len = sizeof(struct sockaddr_in);
-	int tcpdc_sock, ftpc_sock;
-	struct sockaddr_in datagram, tcpdc_datagram;
-	struct hostent *lp, *gethostbyname();
-	TCP_Packet ftpcPacket; /* create a TCP packet to send over the network */
+	datagram_len = sizeof(struct sockaddr_in);
 
 	/* create sockets for connecting to server and receiving from tcpdc */
 	tcpdc_sock = tcpd_socket(AF_INET, SOCK_DGRAM, 0);
@@ -59,13 +49,24 @@ int main(int argc, char *argv[])
 	/* Bind ftpc_sock so it is listening on FTPC_PORT for any sender */
 	tcpd_bind(ftpc_sock, &datagram, sizeof(datagram));
 
-
-	/* First, establish the connection with the server. Keep sending packets with the SYN bit set until an ACK is received */
-	struct timeval timeout;
+	/* Set timeout value to .2 seconds */
 	timeout.tv_sec = 0;
 	timeout.tv_usec = 200000;
-	fd_set fds;
-	int result = 0;
+}
+
+void openFile(char *filename)
+{
+	fp = fopen(filename, "rb");
+	if (!fp) 
+    {
+		perror("error opening file to transfer\n");
+		exit(4);
+	}
+}
+
+void establishConnection()
+{
+    int result = 0;
 
 	/* Turn on the SYN bit when setting up the connection */
 	ftpcPacket.flags = 0x2;
@@ -80,22 +81,39 @@ int main(int argc, char *argv[])
 
 		/* If ftpc_sock has not received an ACK, resend the SYN packet */
 		if (result == 0)
-		  continue;
+		    continue;
 
 	    tcpd_recvfrom(ftpc_sock, &ftpcPacket, sizeof(ftpcPacket), 0, &datagram, &datagram_len);
 	} while(result == 0);
+}
+
+/*
+ *The file transfer client takes a filename to transfer as its only
+ *argument.  It opens a UDP socket, creates a message for the server,
+ *packs the message within a packet that is sent to the troll, opens
+ *the specified file, and sends MTU sized data buffers to the server
+ *process.
+*/
+int main(int argc, char *argv[])
+{
+    /* Check if the filename is passed to ftpc */
+    if (argc < 2) 
+    {
+        printf("usage: ftpc filename\n");
+        exit(1);
+    }
+	
+	/* Create sockets, create packets, etc. */
+	initializeData();
+
+	/* First, establish the connection with the server. Keep sending packets with the SYN bit set until an ACK is received */
+	establishConnection();
 
 	printf("Connection established...\n");
 	
 	/* Open file to transfer */
 	char *filename = argv[1];
-	FILE *fp;
-	fp = fopen(filename, "rb");
-	if (!fp) 
-    {
-		perror("error opening file to transfer\n");
-		exit(4);
-	}
+	openFile(filename);
 
 	printf("Client sending filename: %s\n", filename);
 	printf("Sending file...\n");
@@ -135,6 +153,7 @@ int main(int argc, char *argv[])
 		bytes_total += bytes_read;
 		printf("Sending seqNum %u\n", ftpcPacket.seqNum);
 
+		int result = 0;
 		/* At this point, ftpc will either receive an ackNum or timeout if the packet was dropped */
 		do
 		{

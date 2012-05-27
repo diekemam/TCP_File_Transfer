@@ -10,22 +10,14 @@
 #include "packet.h"
 #include "tcpd_functions.h"
 
-/*
- *The file transfer server takes no arguments - it
- *simply waits to receive data from the sender on a
- *predefined port.  It opens a UDP socket, opens a new
- *file to write, creates a message to accept incoming
- *data messages from the client, and receives data 
- *until getting an empty packet, indicating the end
- *of the file.
- */
-int main (void)
-{
-    int inSock, outSock, datagram_len;
-    struct sockaddr_in datagram, tcpds_datagram;
-	struct hostent *hp, *gethostbyname();
-	TCP_Packet ftpsPacket;
+int inSock, outSock, datagram_len;
+struct sockaddr_in datagram, tcpds_datagram;
+struct hostent *hp, *gethostbyname();
+TCP_Packet ftpsPacket;
+FILE *fp;
 
+void initializeData()
+{
     /* Open UDP sockets for receiving seqNums and sending acks*/
     inSock = tcpd_socket(AF_INET, SOCK_DGRAM, 0);
 	outSock = tcpd_socket(AF_INET, SOCK_DGRAM, 0);
@@ -51,29 +43,58 @@ int main (void)
 		exit(3);
 	}
     bcopy((char *)hp->h_addr, (char *)&tcpds_datagram.sin_addr, hp->h_length);
-	
-    /* Display port numbers being used */
-    printf("Server waiting on port %d\n", ntohs(datagram.sin_port));
-	printf("Sending acks to tcpds on port %d\n", ntohs(tcpds_datagram.sin_port));
+}
 
-
-
+void establishConnection()
+{
 	/* Wait indefinitely until we receive a SYN packet from tcpds */
 	tcpd_recvfrom(inSock, (char *)&ftpsPacket, sizeof(ftpsPacket), 0, &datagram, &datagram_len);
 
 	printf("Received SYN packet from troll, sending ACK to tcpds\n");
 	tcpd_sendto(outSock, (char *)&ftpsPacket, sizeof(ftpsPacket), 0, &tcpds_datagram, sizeof(tcpds_datagram));
+}
 
-
-
-	/* open file to write */
-	FILE *fp;
-	fp = fopen("MyImage1.jpg", "wb");
+void openFile(char *fileName, char *mode)
+{
+	/* Open file to write */
+	fp = fopen(fileName, mode);
 	if (!fp) 
 	{
 		perror("error opening file to transfer\n");
 		exit(5);
 	}
+}
+
+/*
+ *The file transfer server takes no arguments - it
+ *simply waits to receive data from the sender on a
+ *predefined port.  It opens a UDP socket, opens a new
+ *file to write, creates a message to accept incoming
+ *data messages from the client, and receives data 
+ *until getting an empty packet, indicating the end
+ *of the file.
+ */
+int main (int argc, char *argv[])
+{
+    if (argc > 1)
+	{
+        printf("Usage -- ftps\n");
+        exit(1);
+	}
+
+	/* Crate sockets, create packets, etc. */
+	initializeData();
+	
+    /* Display port numbers being used */
+    printf("Server waiting on port %d\n", ntohs(datagram.sin_port));
+	printf("Sending acks to tcpds on port %d\n", ntohs(tcpds_datagram.sin_port));
+
+	/* Receive SYN packet from tcpds and forward ACK to ftpc */
+	establishConnection();
+
+	/* Open file MyImage1.jpg for writing */
+	openFile("MyImage1.jpg", "wb");
+
 	
 	int bytes_recv = MAX_BUF_SIZE, bytes_sent = MAX_BUF_SIZE;
 	int bytes_written = 0;
@@ -81,7 +102,7 @@ int main (void)
 	/* Write data to the file until the FIN bit is set */
 	while ( (ftpsPacket.flags & 01) == 0)
 	{
-		/* read from sock and place in buf */
+	    /* Read from sock and place in buf */
 		bzero(&ftpsPacket, sizeof(ftpsPacket));
 		bytes_recv = tcpd_recvfrom(inSock, &ftpsPacket, sizeof(ftpsPacket), 0, &datagram, &datagram_len);
 
@@ -89,7 +110,7 @@ int main (void)
 		if ( (ftpsPacket.flags & 0x1) > 0)
 		    break;
 		
-		/* write received message to file */
+		/* Write received message to file */
 		if (bytes_recv > 0)
 		{
 		  bytes_written = fwrite(ftpsPacket.data, 1, sizeof(ftpsPacket.data), fp);
