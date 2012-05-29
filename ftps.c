@@ -7,51 +7,58 @@
  */
 
 #include "libs.h"
+#include "file_transfer.h"
 #include "packet.h"
 #include "tcpd_functions.h"
 
-int inSock, outSock, datagram_len;
-struct sockaddr_in datagram, tcpds_datagram;
-struct hostent *hp, *gethostbyname();
+int datagram_len, tcpds_sock, ftps_sock;
+struct sockaddr_in ftps_datagram, tcpds_datagram;
+struct hostent *serverAddress, *gethostbyname();
 TCP_Packet ftpsPacket;
 FILE *fp;
 
 void initializeData()
 {
+    datagram_len  = sizeof(struct sockaddr_in);
+
     /* Open UDP sockets for receiving seqNums and sending acks*/
-    inSock = tcpd_socket(AF_INET, SOCK_DGRAM, 0);
-	outSock = tcpd_socket(AF_INET, SOCK_DGRAM, 0);
+    tcpds_sock = tcpd_socket(AF_INET, SOCK_DGRAM, 0);
+	ftps_sock = tcpd_socket(AF_INET, SOCK_DGRAM, 0);
 
-    /* create datagram which listens for any sender and bind it to inSock */
-    datagram.sin_family = AF_INET;
-    datagram.sin_port = htons(FTPS_PORT);
-    datagram.sin_addr.s_addr = INADDR_ANY;
-   
-	tcpd_bind(inSock, &datagram, sizeof(datagram));
-
-    datagram_len = sizeof(struct sockaddr_in);
+    /* Construct datagram for receiving from tcpds */
+    ftps_datagram.sin_family = AF_INET;
+    ftps_datagram.sin_port = htons(FTPS_PORT);
+    ftps_datagram.sin_addr.s_addr = INADDR_ANY;
 
 	/* construct name for sending acks to tcpds */
 	tcpds_datagram.sin_family = AF_INET;
-	tcpds_datagram.sin_port = htons(TCPDS_PORT);
+	tcpds_datagram.sin_port = htons(TCPDS_FROM_FTPS_PORT);
 
 	/* convert troll hostname to IP address and enter into name */
-    hp = gethostbyname(SRV_HOST_NAME);
-	if (hp == 0)
+    serverAddress = gethostbyname(SRV_HOST_NAME);
+	if (serverAddress == 0)
 	{
 	    fprintf(stderr, "%s:unknown host\n", SRV_HOST_NAME);
 		exit(3);
 	}
-    bcopy((char *)hp->h_addr, (char *)&tcpds_datagram.sin_addr, hp->h_length);
+    bcopy((char *)serverAddress->h_addr, (char *)&tcpds_datagram.sin_addr, serverAddress->h_length);
+
+	/* Display port numbers being used */
+    printf("Server waiting on port %d\n", ntohs(ftps_datagram.sin_port));
+	printf("Sending acks to tcpds on port %d\n", ntohs(tcpds_datagram.sin_port));
+
+	/* Bind ftps_sock so it is listening on FTPS_PORT from any sender */
+	tcpd_bind(ftps_sock, &ftps_datagram, datagram_len);
 }
 
 void establishConnection()
 {
 	/* Wait indefinitely until we receive a SYN packet from tcpds */
-	tcpd_recvfrom(inSock, (char *)&ftpsPacket, sizeof(ftpsPacket), 0, &datagram, &datagram_len);
+	tcpd_recvfrom(ftps_sock, (char *)&ftpsPacket, sizeof(ftpsPacket), 0, &ftps_datagram, &datagram_len);
 
 	printf("Received SYN packet from troll, sending ACK to tcpds\n");
-	tcpd_sendto(outSock, (char *)&ftpsPacket, sizeof(ftpsPacket), 0, &tcpds_datagram, sizeof(tcpds_datagram));
+
+	tcpd_sendto(tcpds_sock, (char *)&ftpsPacket, sizeof(ftpsPacket), 0, &tcpds_datagram, sizeof(tcpds_datagram));
 }
 
 void openFile(char *fileName, char *mode)
@@ -85,26 +92,21 @@ int main (int argc, char *argv[])
 	/* Crate sockets, create packets, etc. */
 	initializeData();
 	
-    /* Display port numbers being used */
-    printf("Server waiting on port %d\n", ntohs(datagram.sin_port));
-	printf("Sending acks to tcpds on port %d\n", ntohs(tcpds_datagram.sin_port));
-
 	/* Receive SYN packet from tcpds and forward ACK to ftpc */
 	establishConnection();
 
 	/* Open file MyImage1.jpg for writing */
 	openFile("MyImage1.jpg", "wb");
-
 	
 	int bytes_recv = MAX_BUF_SIZE, bytes_sent = MAX_BUF_SIZE;
 	int bytes_written = 0;
 
 	/* Write data to the file until the FIN bit is set */
-	while ( (ftpsPacket.flags & 01) == 0)
+	while (1)
 	{
 	    /* Read from sock and place in buf */
 		bzero(&ftpsPacket, sizeof(ftpsPacket));
-		bytes_recv = tcpd_recvfrom(inSock, &ftpsPacket, sizeof(ftpsPacket), 0, &datagram, &datagram_len);
+		bytes_recv = tcpd_recvfrom(ftps_sock, &ftpsPacket, sizeof(ftpsPacket), 0, &ftps_datagram, &datagram_len);
 
 		/* Stop writing to file once the FIN flag is set */
 		if ( (ftpsPacket.flags & 0x1) > 0)
@@ -120,15 +122,15 @@ int main (int argc, char *argv[])
 		printf("Received sequence number %u, sending acknowledgement number %u\n", ftpsPacket.seqNum, (ftpsPacket.ackNum));
 
 		/* Send the acknowledgement back to tcpds */
-		bytes_sent = tcpd_sendto(outSock, &ftpsPacket, sizeof(ftpsPacket), 0, &tcpds_datagram, sizeof(tcpds_datagram));
+		bytes_sent = tcpd_sendto(tcpds_sock, &ftpsPacket, sizeof(ftpsPacket), 0, &tcpds_datagram, sizeof(tcpds_datagram));
 	}
 
 	printf("Finished writing MyImage1.jpg\n");
 	fclose(fp);
 
     /* Server terminates connection, closes sockets, and exits */
-    close(inSock);
-	close(outSock);
+    close(ftps_sock);
+	close(tcpds_sock);
     exit(0);
 	return 0;
 }

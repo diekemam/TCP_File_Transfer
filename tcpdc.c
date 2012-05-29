@@ -11,9 +11,9 @@
 #include "deltatimer.h"
 #include "tcpd_buf.h"
 
-int datagram_len, ftpc_sock, tcpdc_sock, troll_sock;
-struct sockaddr_in datagram, troll_datagram, tcpds_datagram, ftpc_datagram;
-struct hostent *hp, *lp, *gethostbyname();
+int datagram_len, in_ftpc_sock, in_tcpds_sock, out_sock;
+struct sockaddr_in from_tcpds_datagram, from_ftpc_datagram, to_ftpc_datagram, to_troll_datagram;
+struct hostent *clientAddress, *serverAddress, *gethostbyname();
 struct timeval timeout;
 Troll_Packet trollPacket;
 TCP_Packet tcpdcPacket; /* Used to receive acks from server */
@@ -24,57 +24,59 @@ void initializeData()
     datagram_len = sizeof(struct sockaddr_in);
 
     /* create socket for receiving from ftpc and tcpds, and sending to troll and ftpc */
-	tcpdc_sock = tcpd_socket(AF_INET, SOCK_DGRAM, 0);
-	troll_sock = tcpd_socket(AF_INET, SOCK_DGRAM, 0);
-	ftpc_sock = tcpd_socket(AF_INET, SOCK_DGRAM, 0);
-	
-	/* construct datagram for receiving from ftpc */
-	datagram.sin_family = AF_INET;
-	datagram.sin_port = htons(TCPDC_PORT);
-	datagram.sin_addr.s_addr = INADDR_ANY;
-
-	/* Bind tcpdc_sock so it is listening on TCPDC_PORT for any sender */
-	tcpd_bind(tcpdc_sock, &datagram, sizeof(datagram));
-
-	printf("TCPDC waiting on port num %d\n", ntohs(datagram.sin_port));
+	in_ftpc_sock = tcpd_socket(AF_INET, SOCK_DGRAM, 0);
+	in_tcpds_sock = tcpd_socket(AF_INET, SOCK_DGRAM, 0);
+	out_sock = tcpd_socket(AF_INET, SOCK_DGRAM, 0);
 
 	/* construct datagram for connecting to troll */
-	troll_datagram.sin_family = AF_INET;
-	troll_datagram.sin_port = htons(TROLL_PORT);
+	to_troll_datagram.sin_family = AF_INET;
+	to_troll_datagram.sin_port = htons(TROLL_CLIENT_PORT);
 
 	/* construct datagram for forwarding acks to ftpc */
-	ftpc_datagram.sin_family = AF_INET;
-	ftpc_datagram.sin_port = htons(FTPC_PORT);
+	to_ftpc_datagram.sin_family = AF_INET;
+	to_ftpc_datagram.sin_port = htons(FTPC_PORT);
 
+	/* construct datagram for receiving from tcpds */
+	from_tcpds_datagram.sin_family = AF_INET;
+	from_tcpds_datagram.sin_port = htons(TCPDC_FROM_TCPDS_PORT);
+	from_tcpds_datagram.sin_addr.s_addr = INADDR_ANY;
 
-	/* remove later */
-	tcpds_datagram.sin_family = AF_INET;
-	tcpds_datagram.sin_port = htons(TCPDS_PORT);
+	/* construct datagram for receiving from ftpc */
+	from_ftpc_datagram.sin_family = AF_INET;
+	from_ftpc_datagram.sin_port = htons(TCPDC_FROM_FTPC_PORT);
+	from_tcpds_datagram.sin_addr.s_addr = INADDR_ANY;
 
+	/* prepare message for troll */
+	trollPacket.header.sin_family = htons(AF_INET);
+	trollPacket.header.sin_port = htons(TCPDS_FROM_TROLL_PORT);
 
 	/* convert ftpc hostname to IP address and enter into ftpc_datagram and troll_datagram */
-	lp = gethostbyname(CLI_HOST_NAME);
-	if (lp == 0) 
+	clientAddress = gethostbyname(CLI_HOST_NAME);
+	if (clientAddress == 0) 
 	{
 		fprintf(stderr, "%s:unknown host\n", CLI_HOST_NAME);
 		exit(3);
 	}
-	bcopy((char *)lp->h_addr, (char *)&ftpc_datagram.sin_addr, lp->h_length);
-	bcopy((char *)lp->h_addr, (char *)&troll_datagram.sin_addr, lp->h_length);
-			
-	/* prepare message for troll */
-	trollPacket.header.sin_family = htons(AF_INET);
-	trollPacket.header.sin_port = htons(TCPDS_PORT);
+	bcopy((char *)clientAddress->h_addr, (char *)&to_ftpc_datagram.sin_addr, clientAddress->h_length);
+	bcopy((char *)clientAddress->h_addr, (char *)&to_troll_datagram.sin_addr, clientAddress->h_length);
 			
 	/* convert server hostname to IP address and enter into troll_datagram */
-	hp = gethostbyname(SRV_HOST_NAME);
-	if (hp == 0)
+	serverAddress = gethostbyname(SRV_HOST_NAME);
+	if (serverAddress == 0)
     {
 		fprintf(stderr, "%s:unknown host\n", SRV_HOST_NAME);
 		exit(3);
 	}
-	bcopy((char *)hp->h_addr, (char *)&trollPacket.header.sin_addr, hp->h_length);
-	bcopy((char *)hp->h_addr, (char *)&tcpds_datagram.sin_addr, hp ->h_length);
+	bcopy((char *)serverAddress->h_addr, (char *)&trollPacket.header.sin_addr, serverAddress->h_length);
+
+	printf("Sending to ftpc on port %d\n", to_ftpc_datagram.sin_port);
+	printf("Sending to troll on port %d\n", to_troll_datagram.sin_port);
+	printf("Receiving from ftpc on port %d\n", from_ftpc_datagram.sin_port);
+	printf("Receiving from tcpds on port %d\n", from_tcpds_datagram.sin_port);
+
+	/* Bind input sockets, so they're listening to the correct source address and port number */
+	tcpd_bind(in_ftpc_sock, &from_ftpc_datagram, datagram_len);
+	tcpd_bind(in_tcpds_sock, &from_tcpds_datagram, datagram_len);
 
 	/* Set timeout to .1 seconds */
 	timeout.tv_sec = 0;
@@ -86,28 +88,86 @@ void establishConnection()
 	int result = 0;
 	do
 	{
-	    tcpd_recvfrom(tcpdc_sock, (char *)&tcpdcPacket, sizeof(tcpdcPacket), 0, &datagram, &datagram_len);
+	    tcpd_recvfrom(in_ftpc_sock, (char *)&tcpdcPacket, sizeof(tcpdcPacket), 0, &from_ftpc_datagram, &datagram_len);
 	    printf("Received SYN packet from client, forwarding to tcpds\n");
-	    tcpd_sendto(troll_sock, (char *)&trollPacket, sizeof(trollPacket), 0, &troll_datagram, sizeof(troll_datagram));
-	  
+	    tcpd_sendto(out_sock, (char *)&trollPacket, sizeof(trollPacket), 0, &to_troll_datagram, datagram_len);
+		
 	    FD_ZERO(&fds);
-	    FD_SET(tcpdc_sock, &fds);
+	    FD_SET(in_tcpds_sock, &fds);
 	    result = select(FD_SETSIZE, &fds, NULL, NULL, &timeout);
 
 		/* If we have not received an ACK, ftpc will retransmit the SYN packet */
 		if (result == 0)
 		    continue;
 
-	    tcpd_recvfrom(tcpdc_sock, (char *)&tcpdcPacket, sizeof(tcpdcPacket), 0, &datagram, &datagram_len);
+	    tcpd_recvfrom(in_tcpds_sock, (char *)&tcpdcPacket, sizeof(tcpdcPacket), 0, &from_tcpds_datagram, &datagram_len);
 	  
 	} while(result == 0);
 
 	/* Now we have received the ACK, so send it back to ftpc */
 	printf("Received SYNACK, forwarding to ftpc\n");
-	tcpd_sendto(ftpc_sock, (char *)&tcpdcPacket, sizeof(tcpdcPacket), 0, &ftpc_datagram, sizeof(ftpc_datagram));
+	tcpd_sendto(out_sock, (char *)&tcpdcPacket, sizeof(tcpdcPacket), 0, &to_ftpc_datagram, datagram_len);
 }
 
-/* tcp daemon called with host name and port number of server */
+void sendFile()
+{
+    /* Set the timeout to 2 seconds */
+    timeout.tv_sec = 2;
+    timeout.tv_usec = 0;
+
+	int bytes_sent, bytes_recv;
+
+	while (1)
+	{
+	    /* Wait until we hear from ftpc or tcpds */
+	    FD_ZERO(&fds);
+	    FD_SET(in_ftpc_sock, &fds);
+	    FD_SET(in_tcpds_sock, &fds);
+	    int result = select(FD_SETSIZE, &fds, NULL, NULL, &timeout);
+		if (result < 0)
+		{
+			fprintf(stderr, "Error: select failed\n");
+			exit(4);
+		}
+
+		/* Keep waiting until we hear from ftpc or tcpds */
+		if (result == 0)
+		    continue;
+
+		if (FD_ISSET(in_ftpc_sock, &fds))
+		{
+		    /* Receives packets from local ftpc process */
+		    bzero(&trollPacket.packet, sizeof(trollPacket.packet));
+
+			bytes_recv = tcpd_recvfrom(in_ftpc_sock, (char *)&trollPacket.packet, sizeof(trollPacket.packet), 0, &from_ftpc_datagram, &datagram_len);
+
+			/* Compute checksum before forwarding packet to troll */
+			trollPacket.packet.checksum = checksum(trollPacket.packet.data);
+			printf("client checksum = %04x\n", trollPacket.packet.checksum);
+
+			printf("Forwarding sequence num %u to tcpds through troll\n", trollPacket.packet.seqNum);
+
+			/* Forward buffer message from daemon to troll process */
+			bytes_sent = tcpd_sendto(out_sock, (char *)&trollPacket, sizeof(trollPacket), 0, &to_troll_datagram, datagram_len);
+
+			/* End the connection once the FIN bit is set */ 
+			if ( (trollPacket.packet.flags & 0x1) == 1)
+			    break;
+		}
+
+		else if (FD_ISSET(in_tcpds_sock, &fds))
+		{
+		    bzero(&tcpdcPacket, sizeof(tcpdcPacket));
+
+			bytes_recv = tcpd_recvfrom(in_tcpds_sock, (char *)&tcpdcPacket, sizeof(tcpdcPacket), 0, &from_tcpds_datagram, &datagram_len);
+
+			printf("Forwarding ackNum %u to ftpc\n", tcpdcPacket.ackNum);
+
+			bytes_sent = tcpd_sendto(out_sock, (char *)&tcpdcPacket, sizeof(tcpdcPacket), 0, &to_ftpc_datagram, datagram_len);
+		}
+	}
+}
+
 int main (int argc, char *argv[]) 
 {
     if (argc > 1)
@@ -119,53 +179,11 @@ int main (int argc, char *argv[])
 	/* Create sockets, create packets, etc. */
 	initializeData();
 
-	printf("Sending to troll at port %d\n", ntohs(trollPacket.header.sin_port));
-	printf("Troll sending to TCPDS at port %d\n", ntohs(trollPacket.header.sin_port));
-
 	/* Send the SYN packets over to tcpds to start the connection */
 	establishConnection(); 
 
-	int bytes_sent = 0, bytes_recv = 0;
-
-	/* Make sure no FIN, SYN, etc. flags are set when sending the file data over to tcpds */
-	trollPacket.packet.flags = 0;
-
-	int result = 0;
-	/* Receive image data until the fin bit has been set */	
-	while ( (trollPacket.packet.flags & 0x1) == 0) 
-	{
-	    /* receives packets from local ftpc process */
-        bzero(&trollPacket.packet, sizeof(trollPacket.packet));
-
-		bytes_recv = tcpd_recvfrom(tcpdc_sock, (char *)&trollPacket.packet, sizeof(trollPacket.packet), 0, &datagram, &datagram_len);
-
-		/* compute checksum before forwarding packet to troll */
-		trollPacket.packet.checksum = checksum(trollPacket.packet.data);
-		printf("client checksum = %04x\n", trollPacket.packet.checksum);
-
-		/* forward buffer message from daemon to troll process */
-	    bytes_sent = tcpd_sendto(troll_sock, (char *)&trollPacket, sizeof(trollPacket), 0, &troll_datagram, sizeof(troll_datagram));
-
-		printf("Forwarding sequence num %u to tcpds through troll\n", trollPacket.packet.seqNum); 
-
-		/* Stop transmitting data once the FIN bit has been set */
-		if ( (trollPacket.packet.flags & 0x1) == 1)
-		    break;
-
-
-		FD_ZERO(&fds);
-		FD_SET(tcpdc_sock, &fds);
-		result = select(sizeof(fds) * 8, &fds, NULL, NULL, &timeout);
-		if (result == 0)
-		    continue;
-
-		bytes_recv = tcpd_recvfrom(tcpdc_sock, (char *)&tcpdcPacket, sizeof(tcpdcPacket), 0, &datagram, &datagram_len);
-
-		bytes_sent = tcpd_sendto(ftpc_sock, (char *)&tcpdcPacket, sizeof(tcpdcPacket), 0, (struct sockaddr *)&ftpc_datagram, sizeof(ftpc_datagram));
-
-		printf("Forwarding ackNum %u to ftpc\n", tcpdcPacket.ackNum);
-				
-	}
+	/* Send file to tcpds using circular buffer and forward incoming ACKs to ftpc */
+	sendFile();
 	printf("Finished forwarding file\n");
 	return(0);
 }

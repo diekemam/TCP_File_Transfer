@@ -13,7 +13,7 @@
 #include "tcpd_buf.h"
 
 int datagram_len, tcpdc_sock, ftpc_sock;
-struct sockaddr_in datagram, tcpdc_datagram;
+struct sockaddr_in ftpc_datagram, tcpdc_datagram;
 struct hostent *lp, *gethostbyname();
 struct timeval timeout;
 fd_set fds;
@@ -28,9 +28,14 @@ void initializeData()
 	tcpdc_sock = tcpd_socket(AF_INET, SOCK_DGRAM, 0);
 	ftpc_sock = tcpd_socket(AF_INET, SOCK_DGRAM, 0);
 
+	/* construct datagram for receiving from tcpdc */
+	ftpc_datagram.sin_family = AF_INET;
+	ftpc_datagram.sin_port = htons(FTPC_PORT);
+	ftpc_datagram.sin_addr.s_addr = INADDR_ANY;
+
 	/* construct tcpdc_datagram for sending packets to tcpdc */
 	tcpdc_datagram.sin_family = AF_INET;
-	tcpdc_datagram.sin_port = htons(TCPDC_PORT);
+	tcpdc_datagram.sin_port = htons(TCPDC_FROM_FTPC_PORT);
 
 	/* convert tcpdc hostname to IP address and enter into tcpdc_datagram */
 	lp = gethostbyname(CLI_HOST_NAME);
@@ -41,22 +46,17 @@ void initializeData()
 	}
 	bcopy((char *)lp->h_addr, (char *)&tcpdc_datagram.sin_addr, lp->h_length);
 
-	/* construct datagram for receiving from tcpdc */
-	datagram.sin_family = AF_INET;
-	datagram.sin_port = htons(FTPC_PORT);
-	datagram.sin_addr.s_addr = INADDR_ANY;
-
 	/* Bind ftpc_sock so it is listening on FTPC_PORT for any sender */
-	tcpd_bind(ftpc_sock, &datagram, sizeof(datagram));
+	tcpd_bind(ftpc_sock, &ftpc_datagram, datagram_len);
 
 	/* Set timeout value to .2 seconds */
 	timeout.tv_sec = 0;
 	timeout.tv_usec = 200000;
 }
 
-void openFile(char *filename)
+void openFile(char *filename, char *mode)
 {
-	fp = fopen(filename, "rb");
+	fp = fopen(filename, mode);
 	if (!fp) 
     {
 		perror("error opening file to transfer\n");
@@ -72,7 +72,7 @@ void establishConnection()
 	ftpcPacket.flags = 0x2;
 	do
 	{
-	    tcpd_sendto(tcpdc_sock, &ftpcPacket, sizeof(ftpcPacket), 0, &tcpdc_datagram, sizeof(tcpdc_datagram));
+	    tcpd_sendto(tcpdc_sock, &ftpcPacket, sizeof(ftpcPacket), 0, &tcpdc_datagram, datagram_len);
 	    printf("Sending SYN packet to server\n");
 	    FD_ZERO(&fds);
 	    FD_SET(ftpc_sock, &fds);
@@ -83,7 +83,7 @@ void establishConnection()
 		if (result == 0)
 		    continue;
 
-	    tcpd_recvfrom(ftpc_sock, &ftpcPacket, sizeof(ftpcPacket), 0, &datagram, &datagram_len);
+	    tcpd_recvfrom(ftpc_sock, &ftpcPacket, sizeof(ftpcPacket), 0, &ftpc_datagram, &datagram_len);
 	} while(result == 0);
 }
 
@@ -113,7 +113,7 @@ int main(int argc, char *argv[])
 	
 	/* Open file to transfer */
 	char *filename = argv[1];
-	openFile(filename);
+	openFile(filename, "rb");
 
 	printf("Client sending filename: %s\n", filename);
 	printf("Sending file...\n");
@@ -172,7 +172,7 @@ int main(int argc, char *argv[])
 
 
 		/* Wait for acknowledgement from ftps */
-		bytes_recv = tcpd_recvfrom(ftpc_sock, &ftpcPacket, sizeof(ftpcPacket), 0, &datagram, &datagram_len);
+		bytes_recv = tcpd_recvfrom(ftpc_sock, &ftpcPacket, sizeof(ftpcPacket), 0, &ftpc_datagram, &datagram_len);
 
 		printf("Received ackNum %u\n", ftpcPacket.ackNum);
 		ftpcPacket.seqNum++;

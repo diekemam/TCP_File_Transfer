@@ -6,9 +6,13 @@
 #define TCPD_WINDOW_SIZE 32
 #define CLI_HOST_NAME "mu.cse.ohio-state.edu"
 #define SRV_HOST_NAME "kappa.cse.ohio-state.edu"
-#define FTPS_PORT 30700
-#define TCPDC_PORT 30701
-#define TROLL_PORT 30702
-#define TCPDS_PORT 30703
+#define FTPC_PORT 30700
+#define TCPDC_FROM_FTPC_PORT 30701
+#define TCPDC_FROM_TCPDS_PORT 30702
+#define TROLL_CLIENT_PORT 30703
+#define TROLL_SERVER_PORT 30704
+#define TCPDS_FROM_TROLL_PORT 30705
+#define TCPDS_FROM_FTPS_PORT 30706
+#define FTPS_PORT 30707
 
 #endif
