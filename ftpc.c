@@ -141,12 +141,6 @@ int main(int argc, char *argv[])
 		/* Since we are sending file data over to tcpdc, none of the SYN, FIN, etc. flags are set */
 		ftpcPacket.flags = 0;
 
-		/* Wait until the circular buffer isn't full and write buf to sock */
-		while (is_tcpd_buf_full())
-		{
-			usleep(10000);
-		}
-
 		/* Now we send the packet over to tcpdc, which is running on the same machine, so we have a reliable connection */
 		bytes_sent = tcpd_sendto(tcpdc_sock, &ftpcPacket, sizeof(ftpcPacket), 0, &tcpdc_datagram, sizeof(tcpdc_datagram));
 
@@ -159,7 +153,7 @@ int main(int argc, char *argv[])
 		{
 		    FD_ZERO(&fds);
 		    FD_SET(ftpc_sock, &fds);
-		    result = select(sizeof(fds) * 8, &fds, NULL, NULL, &timeout);
+		    result = select(FD_SETSIZE, &fds, NULL, NULL, &timeout);
 
 			/* If ftpc_sock has not received any data before it times out, resend the packet */
 		    if (result == 0)

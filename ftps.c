@@ -122,7 +122,7 @@ int main (int argc, char *argv[])
 		printf("Received sequence number %u, sending acknowledgement number %u\n", ftpsPacket.seqNum, (ftpsPacket.ackNum));
 
 		/* Send the acknowledgement back to tcpds */
-		bytes_sent = tcpd_sendto(tcpds_sock, &ftpsPacket, sizeof(ftpsPacket), 0, &tcpds_datagram, sizeof(tcpds_datagram));
+		bytes_sent = tcpd_sendto(tcpds_sock, &ftpsPacket, sizeof(ftpsPacket), 0, &tcpds_datagram, datagram_len);
 	}
 
 	printf("Finished writing MyImage1.jpg\n");
