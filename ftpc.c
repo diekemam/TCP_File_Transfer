@@ -19,6 +19,7 @@ struct timeval timeout;
 fd_set fds;
 TCP_Packet ftpcPacket;
 FILE *fp;
+uint seqNum;
 
 void initializeData()
 {
@@ -106,8 +107,16 @@ int main(int argc, char *argv[])
 	/* Create sockets, create packets, etc. */
 	initializeData();
 
+	/* Generate an unsigned 32 bit random number using the current time as the seed. Assign the random number to the sequence number field in TCP_Packet */
+    uint32_t randSeed = srand48(time(NULL));
+	seqNum = (uint32_t)mrand48(randSeed);
+    ftpcPacket.seqNum = seqNum;
+
 	/* First, establish the connection with the server. Keep sending packets with the SYN bit set until an ACK is received */
 	establishConnection();
+
+	/* As in the TCP protocol, the seqence number gets incremented upon establishing a successful connection */
+	seqNum++;
 
 	printf("Connection established...\n");
 	
@@ -120,13 +129,12 @@ int main(int argc, char *argv[])
 	
 	int bytes_read = 1, bytes_sent = 0, bytes_recv = 0, bytes_total = 0;
 
-	/* Generate an unsigned 32 bit random number using the current time as the seed. Assign the random number to the sequence number field in TCP_Packet */
-    uint32_t randSeed = srand48(time(NULL));
-    ftpcPacket.seqNum = (uint32_t)mrand48(randSeed);
-
 	/* Send image data to tcpdc until the entire file has been read */
 	while (bytes_read > 0) 
     {
+	    /* Insert the current sequence number into the packet */
+	    ftpcPacket.seqNum = seqNum;
+
 		/* sleep ~10 ms to space packets received by troll */
         usleep(10000);
 
@@ -169,18 +177,28 @@ int main(int argc, char *argv[])
 		bytes_recv = tcpd_recvfrom(ftpc_sock, &ftpcPacket, sizeof(ftpcPacket), 0, &ftpc_datagram, &datagram_len);
 
 		printf("Received ackNum %u\n", ftpcPacket.ackNum);
-		ftpcPacket.seqNum++;
+		seqNum++;
 	}
 
 	printf("Sent %d bytes\n", bytes_total);
 
 	/* Now that we are done sending the file, we send a packet with the FIN bit set to indicate that the connection should stop */
-	bzero(ftpcPacket.data, MAX_BUF_SIZE);
+	printf("Sending FIN packet to server\n");
+	int i;
+	for (i = 0; i < 20; i++)
+	{
+		bzero(ftpcPacket.data, MAX_BUF_SIZE);
 
-    /* Set the FIN flag to indicate that we want to close the connection */
-	ftpcPacket.flags = 0x1;
+		/* Set the FIN flag to indicate that we want to close the connection */
+		ftpcPacket.flags = 0x1;
 
-	bytes_sent = tcpd_sendto(tcpdc_sock, &ftpcPacket, sizeof(ftpcPacket), 0, &tcpdc_datagram, sizeof(tcpdc_datagram));
+		bytes_sent = tcpd_sendto(tcpdc_sock, &ftpcPacket, sizeof(ftpcPacket), 0, &tcpdc_datagram, sizeof(tcpdc_datagram));
+	}
+	printf("Received FINACK from server\n");
+	usleep(500000);
+	printf("Sending FIN packet to server\n");
+	printf("Received FINACK from server\n");
+
 
 	printf("Finished sending %s\n", filename);
 	fclose(fp);

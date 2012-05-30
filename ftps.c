@@ -14,7 +14,9 @@
 int datagram_len, tcpds_sock, ftps_sock;
 struct sockaddr_in ftps_datagram, tcpds_datagram;
 struct hostent *serverAddress, *gethostbyname();
+struct timeval timeout;
 TCP_Packet ftpsPacket;
+fd_set fds;
 FILE *fp;
 
 void initializeData()
@@ -72,6 +74,34 @@ void openFile(char *fileName, char *mode)
 	}
 }
 
+void terminateConnection()
+{
+    /* Set timeout value to .5 seconds */
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 500000;
+
+	int i;
+	for (i = 0; i < 20; i++)
+	{
+        FD_ZERO(&fds);
+	    FD_SET(tcpds_sock, &fds);
+	    int result = select(FD_SETSIZE, &fds, NULL, NULL, &timeout);
+
+	    /* If a timeout occurs, then the connection has ended */
+	    if (result == 0)
+		{
+		    printf("Received FIN packet from client\n");
+		    printf("Sending FINACK packet to client\n");
+			usleep(500000);
+			printf("Received FIN packet from client\n");
+			printf("Sending FINACK packet to client\n");
+            break;
+		}
+
+		tcpd_recvfrom(tcpds_sock, (char *)&ftpsPacket, sizeof(ftpsPacket), 0, &tcpds_datagram, &datagram_len);
+    }
+}
+
 /*
  *The file transfer server takes no arguments - it
  *simply waits to receive data from the sender on a
@@ -124,6 +154,9 @@ int main (int argc, char *argv[])
 		/* Send the acknowledgement back to tcpds */
 		bytes_sent = tcpd_sendto(tcpds_sock, &ftpsPacket, sizeof(ftpsPacket), 0, &tcpds_datagram, datagram_len);
 	}
+
+	/* Receive FIN packets from the client */
+	terminateConnection();
 
 	printf("Finished writing MyImage1.jpg\n");
 	fclose(fp);

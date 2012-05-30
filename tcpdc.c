@@ -1,4 +1,4 @@
-/* 
+/*
  * tcpdc.c, TCP Daemon on client side using UDP functions
  * Michael Diekema, Adam Zink
 */
@@ -88,11 +88,25 @@ void establishConnection()
 	int result = 0;
 	do
 	{
-	    tcpd_recvfrom(in_ftpc_sock, (char *)&tcpdcPacket, sizeof(tcpdcPacket), 0, &from_ftpc_datagram, &datagram_len);
+	    tcpd_recvfrom(in_ftpc_sock, (char *)&trollPacket.packet, sizeof(trollPacket.packet), 0, &from_ftpc_datagram, &datagram_len);
 	    printf("Received SYN packet from client, forwarding to tcpds\n");
+		printf("Seq Num = %u\n", tcpdcPacket.seqNum);
 		
 		/* Compute checksum before forwarding packet to troll */
 		trollPacket.packet.checksum = checksum(trollPacket.packet);
+
+		/* prepare message for troll */
+		trollPacket.header.sin_family = htons(AF_INET);
+		trollPacket.header.sin_port = htons(TCPDS_FROM_TROLL_PORT);
+
+		/* convert server hostname to IP address and enter into troll_datagram */
+		serverAddress = gethostbyname(SRV_HOST_NAME);
+		if (serverAddress == 0)
+		{
+			fprintf(stderr, "%s:unknown host\n", SRV_HOST_NAME);
+			exit(3);
+		}
+		bcopy((char *)serverAddress->h_addr, (char *)&trollPacket.header.sin_addr, serverAddress->h_length);
 		
 	    tcpd_sendto(out_sock, (char *)&trollPacket, sizeof(trollPacket), 0, &to_troll_datagram, datagram_len);
 		
@@ -106,20 +120,9 @@ void establishConnection()
 
 	    tcpd_recvfrom(in_troll_sock, (char *)&trollPacket, sizeof(trollPacket), 0, &from_troll_datagram, &datagram_len);
 		
-		uint16_t crc = checksum(trollPacket.packet);
-		if (crc == trollPacket.packet.checksum)
-		{
-			/* Now we have received the ACK, so send it back to ftpc */
-			printf("Received SYNACK, forwarding to ftpc\n");
-			tcpd_sendto(out_sock, (char *)&tcpdcPacket, sizeof(tcpdcPacket), 0, &to_ftpc_datagram, datagram_len);
-		}
-			
-		else
-		{
-			    /* invalid checksum, dropping packet */
-			    printf("SYNACK dropped\n");
-				result = 0;
-		}
+		/* Now we have received the ACK, so send it back to ftpc */
+		printf("Received SYNACK, forwarding to ftpc\n");
+		tcpd_sendto(out_sock, (char *)&tcpdcPacket, sizeof(tcpdcPacket), 0, &to_ftpc_datagram, datagram_len);
 		
 	} while (result == 0);
 
@@ -160,7 +163,7 @@ void sendFile()
 			/* Compute checksum before forwarding packet to troll */
 			trollPacket.packet.checksum = checksum(trollPacket.packet);
 			printf("client checksum = %04x\n", trollPacket.packet.checksum);
-			printf("Forwarding sequence num %u to tcpds through troll\n", trollPacket.packet.seqNum);	   
+			printf("Forwarding sequence num %u to tcpds through troll\n", trollPacket.packet.seqNum);
 
 			/* prepare message for troll */
 			trollPacket.header.sin_family = htons(AF_INET);
@@ -208,6 +211,47 @@ void sendFile()
 	}
 }
 
+void terminateConnection()
+{
+    /* Set timeout value to .5 seconds */
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 500000;
+
+	int i;
+	for (i = 0; i < 20; i++)
+	{
+        FD_ZERO(&fds);
+	    FD_SET(in_ftpc_sock, &fds);
+	    int result = select(FD_SETSIZE, &fds, NULL, NULL, &timeout);
+
+	    /* If a timeout occurs, then the connection has ended */
+	    if (result == 0)
+            break;
+
+		/* Receives packets from local ftpc process */
+	    bzero(&trollPacket.packet, sizeof(trollPacket.packet));
+
+		tcpd_recvfrom(in_ftpc_sock, (char *)&trollPacket.packet, sizeof(trollPacket.packet), 0, &from_ftpc_datagram, &datagram_len);
+
+		/* Compute checksum before forwarding packet to troll */
+	 	trollPacket.packet.checksum = checksum(trollPacket.packet);
+
+		/* prepare message for troll */
+		trollPacket.header.sin_family = htons(AF_INET);
+		trollPacket.header.sin_port = htons(TCPDS_FROM_TROLL_PORT);
+		serverAddress = gethostbyname(SRV_HOST_NAME);
+		if (serverAddress == 0)
+		{
+			fprintf(stderr, "%s:unknown host\n", SRV_HOST_NAME);
+			exit(3);
+		}
+	  	bcopy((char *)serverAddress->h_addr, (char *)&trollPacket.header.sin_addr, serverAddress->h_length);
+
+		/* Forward buffer message from daemon to troll process */
+	   	tcpd_sendto(out_sock, (char *)&trollPacket, sizeof(trollPacket), 0, &to_troll_datagram, datagram_len);
+    }
+}
+
 int main (int argc, char *argv[]) 
 {
     if (argc > 1)
@@ -220,10 +264,14 @@ int main (int argc, char *argv[])
 	initializeData();
 
 	/* Send the SYN packets over to tcpds to start the connection */
-	establishConnection(); 
+	establishConnection();
 
 	/* Send file to tcpds using circular buffer and forward incoming ACKs to ftpc */
 	sendFile();
+
+	/* Send FIN packets to ftps to indicate that the connection has closed */
+	terminateConnection();
+
 	printf("Finished forwarding file\n");
 	return(0);
 }

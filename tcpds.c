@@ -106,6 +106,20 @@ void establishConnection()
 		tcpd_recvfrom(in_ftps_sock, (char *)&tcpdsPacket, sizeof(tcpdsPacket), 0, &from_ftps_datagram, &datagram_len);
 
 		printf("Received ACK from ftps, forwarding to tcpdc\n");
+
+		/* prepare message for troll */
+		trollPacket.header.sin_family = htons(AF_INET);
+		trollPacket.header.sin_port = htons(TCPDC_FROM_TROLL_PORT);
+
+		/* Convert tcpdc hostname to IP address and enter into trollPacket */
+		clientAddress = gethostbyname(CLI_HOST_NAME);
+		if (clientAddress == 0) 
+		{
+			fprintf(stderr, "%s:unknown host\n", CLI_HOST_NAME);
+			exit(3);
+		}
+		bcopy((char *)clientAddress->h_addr, (char *)&trollPacket.header.sin_addr, clientAddress->h_length);
+
 		tcpd_sendto(out_sock, (char *)&trollPacket, sizeof(trollPacket), 0, &to_troll_datagram, datagram_len);
 	}
 	
@@ -149,18 +163,37 @@ void sendFile()
 			uint16_t crc = checksum(trollPacket.packet);
 			printf("server checksum = %04x, packet checksum = %04x\n", crc, trollPacket.packet.checksum);
 			printf("current_seq_num = %u, packet seqNum = %u\n", current_seq_num, trollPacket.packet.seqNum);
-			if (crc == trollPacket.packet.checksum && current_seq_num == trollPacket.packet.seqNum)
+			if (crc == trollPacket.packet.checksum)
 			{
-				printf("Forwarding sequence num %u to ftps\n", trollPacket.packet.seqNum);
+			    /* If the ackNum gets ahead of the sequence number, that means that the ACK got lost in the troll, so resend the ACK */
+			    if (current_seq_num == trollPacket.packet.seqNum + 1)
+				{
+				    /* prepare message for troll */
+				  trollPacket.header.sin_family = htons(AF_INET);
+				  trollPacket.header.sin_port = htons(TCPDC_FROM_TROLL_PORT);
+				  clientAddress = gethostbyname(CLI_HOST_NAME);
+				  if (clientAddress == 0) 
+				  {
+					  fprintf(stderr, "%s:unknown host\n", CLI_HOST_NAME);
+					  exit(3);
+				  }
+				  bcopy((char *)clientAddress->h_addr, (char *)&trollPacket.header.sin_addr, clientAddress->h_length);
+		
+				  bytes_sent = tcpd_sendto(out_sock, (char *)&trollPacket, sizeof(trollPacket), 0, &to_troll_datagram, datagram_len);
+				}
 
-			    /*forward buffer message from daemon to ftps*/
-			    bytes_sent = tcpd_sendto(out_sock, (char *)&trollPacket.packet, sizeof(trollPacket.packet), 0, &to_ftps_datagram, datagram_len);
+				else if (current_seq_num == trollPacket.packet.seqNum)
+				{
+					printf("Forwarding sequence num %u to ftps\n", trollPacket.packet.seqNum);
+
+					/*forward buffer message from daemon to ftps*/
+					bytes_sent = tcpd_sendto(out_sock, (char *)&trollPacket.packet, sizeof(trollPacket.packet), 0, &to_ftps_datagram, datagram_len);
+					current_seq_num++;
+				}
 
 				/* If we receive a FIN packet, forward it to ftps and close the connection */
 				if ( (trollPacket.packet.flags & 0x1) == 1)
 				    done = 1;
-				
-				current_seq_num++;
 			}
 			
 			else
@@ -200,7 +233,34 @@ void sendFile()
 	}
 }
 
-int main (int argc, char *argv[]) 
+void terminateConnection()
+{
+    /* Set timeout value to .5 seconds */
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 500000;
+
+	int i;
+	for (i = 0; i < 20; i++)
+	{
+        FD_ZERO(&fds);
+	    FD_SET(in_troll_sock, &fds);
+	    int result = select(FD_SETSIZE, &fds, NULL, NULL, &timeout);
+
+	    /* If a timeout occurs, then the connection has ended */
+	    if (result == 0)
+            break;
+
+		/* Receives packets from local ftpc process */
+	    bzero(&trollPacket.packet, sizeof(trollPacket.packet));
+
+		tcpd_recvfrom(in_troll_sock, (char *)&trollPacket, sizeof(trollPacket), 0, &from_troll_datagram, &datagram_len);
+
+		/* Forward buffer message from daemon to ftps process */
+	   	tcpd_sendto(out_sock, (char *)&trollPacket.packet, sizeof(trollPacket.packet), 0, &to_ftps_datagram, datagram_len);
+    }
+}
+
+int main (int argc, char *argv[])
 {
     if (argc > 1)
 	{
@@ -216,6 +276,9 @@ int main (int argc, char *argv[])
 
 	/* Receive file from troll using circular buffer and forward packet to ftps */
 	sendFile();
+
+	/* Send FIN bits to the server */
+	terminateConnection();
 	printf("Finished forwarding file to ftps\n");
 	return 0;
 }
