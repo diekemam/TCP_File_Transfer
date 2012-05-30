@@ -90,6 +90,10 @@ void establishConnection()
 	{
 	    tcpd_recvfrom(in_ftpc_sock, (char *)&tcpdcPacket, sizeof(tcpdcPacket), 0, &from_ftpc_datagram, &datagram_len);
 	    printf("Received SYN packet from client, forwarding to tcpds\n");
+		
+		/* Compute checksum before forwarding packet to troll */
+		trollPacket.packet.checksum = checksum(trollPacket.packet);
+		
 	    tcpd_sendto(out_sock, (char *)&trollPacket, sizeof(trollPacket), 0, &to_troll_datagram, datagram_len);
 		
 	    FD_ZERO(&fds);
@@ -100,13 +104,25 @@ void establishConnection()
 		if (result == 0)
 		    continue;
 
-	    tcpd_recvfrom(in_troll_sock, (char *)&tcpdcPacket, sizeof(tcpdcPacket), 0, &from_troll_datagram, &datagram_len);
-	  
+	    tcpd_recvfrom(in_troll_sock, (char *)&trollPacket, sizeof(trollPacket), 0, &from_troll_datagram, &datagram_len);
+		
+		uint16_t crc = checksum(trollPacket.packet);
+		if (crc == trollPacket.packet.checksum)
+		{
+			/* Now we have received the ACK, so send it back to ftpc */
+			printf("Received SYNACK, forwarding to ftpc\n");
+			tcpd_sendto(out_sock, (char *)&tcpdcPacket, sizeof(tcpdcPacket), 0, &to_ftpc_datagram, datagram_len);
+		}
+			
+		else
+		{
+			    /* invalid checksum, dropping packet */
+			    printf("SYNACK dropped\n");
+				result = 0;
+		}
+		
 	} while (result == 0);
 
-	/* Now we have received the ACK, so send it back to ftpc */
-	printf("Received SYNACK, forwarding to ftpc\n");
-	tcpd_sendto(out_sock, (char *)&tcpdcPacket, sizeof(tcpdcPacket), 0, &to_ftpc_datagram, datagram_len);
 }
 
 void sendFile()
@@ -142,7 +158,7 @@ void sendFile()
 			bytes_recv = tcpd_recvfrom(in_ftpc_sock, (char *)&trollPacket.packet, sizeof(trollPacket.packet), 0, &from_ftpc_datagram, &datagram_len);
 
 			/* Compute checksum before forwarding packet to troll */
-			trollPacket.packet.checksum = checksum(trollPacket.packet.data);
+			trollPacket.packet.checksum = checksum(trollPacket.packet);
 			printf("client checksum = %04x\n", trollPacket.packet.checksum);
 			printf("Forwarding sequence num %u to tcpds through troll\n", trollPacket.packet.seqNum);	   
 
@@ -171,9 +187,23 @@ void sendFile()
 
 			bytes_recv = tcpd_recvfrom(in_troll_sock, (char *)&trollPacket, sizeof(trollPacket), 0, &from_troll_datagram, &datagram_len);
 
-			printf("Forwarding ackNum %u to ftpc\n", trollPacket.packet.ackNum);
-
-			bytes_sent = tcpd_sendto(out_sock, (char *)&trollPacket.packet, sizeof(trollPacket.packet), 0, &to_ftpc_datagram, datagram_len);
+			/* compute the checksum and compare to packet header value */
+			uint16_t crc = checksum(trollPacket.packet);
+			printf("client checksum = %04x, packet checksum = %04x\n", crc, trollPacket.packet.checksum);
+		
+			if (crc == trollPacket.packet.checksum)
+			{
+			    printf("Forwarding ackNum %u to ftpc\n", trollPacket.packet.ackNum);
+				
+				bytes_sent = tcpd_sendto(out_sock, (char *)&trollPacket.packet, sizeof(trollPacket.packet), 0, &to_ftpc_datagram, datagram_len);
+			}
+			
+			else
+			{
+			    /* invalid checksum, dropping packet */
+			    printf("ACK dropped\n");
+			}
+			
 		}
 	}
 }

@@ -18,6 +18,7 @@ struct timeval timeout;
 Troll_Packet trollPacket;
 TCP_Packet tcpdsPacket;
 fd_set fds;
+unsigned int current_seq_num = 0;
 
 void initializeData()
 {
@@ -87,16 +88,31 @@ void initializeData()
 void establishConnection()
 {
 	/* Wait indefinitely until we receive a SYN packet from the troll */
-	tcpd_recvfrom(in_troll_sock, (char *)&tcpdsPacket, sizeof(tcpdsPacket), 0, &from_troll_datagram, &datagram_len);
+	tcpd_recvfrom(in_troll_sock, (char *)&trollPacket, sizeof(trollPacket), 0, &from_troll_datagram, &datagram_len);
+	
+	/* compute the checksum and compare to packet header value */
+	uint16_t crc = checksum(trollPacket.packet);
+	printf("server checksum = %04x, packet checksum = %04x\n", crc, trollPacket.packet.checksum);
+		
+	if (crc == trollPacket.packet.checksum)
+	{
+		current_seq_num = trollPacket.packet.seqNum + 1;
+		printf("current_seq_num = %u\n", current_seq_num);
+		
+		printf("Received SYN packet from troll, forwarding to ftps\n");
 
-	printf("Received SYN packet from troll, forwarding to ftps\n");
+		tcpd_sendto(out_sock, (char *)&trollPacket.packet, sizeof(trollPacket.packet), 0, &to_ftps_datagram, datagram_len);
 
-	tcpd_sendto(out_sock, (char *)&tcpdsPacket, sizeof(tcpdsPacket), 0, &to_ftps_datagram, datagram_len);
+		tcpd_recvfrom(in_ftps_sock, (char *)&tcpdsPacket, sizeof(tcpdsPacket), 0, &from_ftps_datagram, &datagram_len);
 
-	tcpd_recvfrom(in_ftps_sock, (char *)&tcpdsPacket, sizeof(tcpdsPacket), 0, &from_ftps_datagram, &datagram_len);
-
-	printf("Received ACK from ftps, forwarding to tcpdc\n");
-	tcpd_sendto(out_sock, (char *)&trollPacket, sizeof(trollPacket), 0, &to_troll_datagram, datagram_len);
+		printf("Received ACK from ftps, forwarding to tcpdc\n");
+		tcpd_sendto(out_sock, (char *)&trollPacket, sizeof(trollPacket), 0, &to_troll_datagram, datagram_len);
+	}
+	
+	else
+	{
+		printf("SYN packet dropped\n");
+	}
 }
 
 void sendFile()
@@ -130,12 +146,12 @@ void sendFile()
 		    bytes_recv = tcpd_recvfrom(in_troll_sock, (char *)&trollPacket, sizeof(trollPacket), 0, &from_troll_datagram, &datagram_len);
 
 			/* compute the checksum and compare to packet header value */
-			uint16_t crc = checksum(trollPacket.packet.data);
+			uint16_t crc = checksum(trollPacket.packet);
 			printf("server checksum = %04x, packet checksum = %04x\n", crc, trollPacket.packet.checksum);
-		
-			/* if (crc == trollPacket.packet.checksum) */
+			printf("current_seq_num = %u, packet seqNum = %u\n", current_seq_num, trollPacket.packet.seqNum);
+			if (crc == trollPacket.packet.checksum && current_seq_num == trollPacket.packet.seqNum)
 			{
-			  printf("Forwarding sequence num %u to ftps\n", trollPacket.packet.seqNum);
+				printf("Forwarding sequence num %u to ftps\n", trollPacket.packet.seqNum);
 
 			    /*forward buffer message from daemon to ftps*/
 			    bytes_sent = tcpd_sendto(out_sock, (char *)&trollPacket.packet, sizeof(trollPacket.packet), 0, &to_ftps_datagram, datagram_len);
@@ -143,12 +159,14 @@ void sendFile()
 				/* If we receive a FIN packet, forward it to ftps and close the connection */
 				if ( (trollPacket.packet.flags & 0x1) == 1)
 				    done = 1;
+				
+				current_seq_num++;
 			}
-
-			/* else */
+			
+			else
 			{
 			    /* invalid checksum, dropping packet */
-			    /* printf("Packet dropped\n"); */
+			    printf("Packet dropped\n");
 			}
 		}
 		
@@ -158,6 +176,10 @@ void sendFile()
 
 		    /* Receive a packet from ftps, put it into trollPacket, and send it through the troll */
 		    bytes_recv = tcpd_recvfrom(in_ftps_sock, (char *)&trollPacket.packet, sizeof(trollPacket.packet), 0, &from_ftps_datagram, &datagram_len);
+			
+			/* Compute checksum before forwarding packet to troll */
+			trollPacket.packet.checksum = checksum(trollPacket.packet);
+			printf("server checksum = %04x\n", trollPacket.packet.checksum);
 			
 			printf("Forwarding ackNum %u to troll\n", trollPacket.packet.ackNum);
 
